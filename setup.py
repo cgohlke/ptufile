@@ -66,7 +66,16 @@ class build_ext(_build_ext):
 
 
 ext_modules = [
-    Extension('ptufile._ptufile', ['ptufile/_ptufile.pyx']),
+    Extension(
+        'ptufile._ptufile',
+        ['ptufile/_ptufile.pyx'],
+        define_macros=[
+            # ('CYTHON_TRACE_NOGIL', '1'),
+            # ('CYTHON_LIMITED_API', '1'),
+            # ('Py_LIMITED_API', '1'),
+            ('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION'),
+        ],
+    )
 ]
 
 setup(
@@ -86,6 +95,7 @@ setup(
     },
     packages=['ptufile'],
     package_data={'ptufile': ['py.typed']},
+    entry_points={'console_scripts': ['ptufile = ptufile.__main__:main']},
     python_requires='>=3.9',
     install_requires=['numpy'],
     setup_requires=['setuptools', 'numpy'],
