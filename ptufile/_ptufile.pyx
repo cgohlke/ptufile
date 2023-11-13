@@ -78,16 +78,16 @@ ctypedef fused uint_t:
     uint64_t
 
 
-cdef int _format(
+cdef int init_format(
     const uint32_t format,
     decode_func_t* decode,
-    ssize_t* bins,
-    ssize_t* channels,
+    ssize_t* bins,  # number_bins_max
+    ssize_t* channels,  # number_channels_max
 ):
     if format == 0x00010303:
         # PicoHarpT3
         decode[0] = decode_pt3
-        bins[0] = 0xfff
+        bins[0] = 4096
         channels[0] = 4
     elif format == 0x00010203:
         # PicoHarpT2
@@ -126,34 +126,34 @@ cdef int _format(
     return 0
 
 
-def _decode_info(
+def decode_info(
     const uint32_t[::1] records,
     const uint32_t format,
     const uint32_t line_start,
     const uint32_t line_stop,
     const uint32_t frame_change,
+    const ssize_t lines_in_frame,
 ):
     """Return information about PicoQuant TTTR records."""
     cdef:
         ssize_t nrecords = records.size
-        ssize_t i, maxchannels, maxbins
+        ssize_t i, y, maxchannels, maxbins, skip_first_frame, skip_last_frame
         uint64_t nchannels, nbins, nframes, nphotons, nmarkers, nlines
         uint64_t overflow, time_line_start, time_in_lines
-        uint64_t time_frame_start, time_in_frames
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        bint skip_first_frame = 1
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &maxbins, &maxchannels) != 0:
+    if init_format(format, &decode_func, &maxbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
 
     # Unfortunately Cython's OpenMP does not support min/max reduction
     # https://github.com/cython/cython/issues/3585#issuecomment-625961911
 
     with nogil:
-        time_in_frames = 0
-        time_frame_start = 0
+        skip_first_frame = 0
+        skip_last_frame = 0
+        time_line_start = 0
         time_in_lines = 0
         overflow = 0
         itime = 0
@@ -163,6 +163,7 @@ def _decode_info(
         nmarkers = 0
         nlines = 0
         nframes = 0
+        y = 0
         for i in range(nrecords):
             decode_func(
                 records[i],
@@ -182,25 +183,55 @@ def _decode_info(
             elif ispecial == 2:
                 nmarkers += 1
                 if imarker & frame_change:
-                    if time_frame_start > 0:
-                        nframes += 1
-                        time_in_frames += (overflow + itime) - time_frame_start
-                    time_frame_start = overflow + itime
+                    if lines_in_frame > y + 1:
+                        if nframes == 1:
+                            skip_first_frame = 1
+                        else:
+                            skip_last_frame = 1
+                    else:
+                        skip_last_frame = 0
+                    time_line_start = 0
+                    y = 0
                 if imarker & line_stop:
-                    nlines += 1
-                    time_in_lines += (overflow + itime) - time_line_start
+                    if time_line_start > 0:
+                        time_in_lines += (overflow + itime) - time_line_start
                     time_line_start = 0
                 if imarker & line_start:
                     time_line_start = overflow + itime
+                    nlines += 1
+                    if y == 0:
+                        # new frame starts at first line
+                        # after start or frame change marker
+                        nframes += 1
+                    y += 1
 
-    if nframes == 0 and time_frame_start > 0:
-        # one frame marker
-        skip_first_frame = 0
-        nframes = 1
-        time_in_frames += (overflow + itime) - time_frame_start
+        nchannels += 1
+        nbins = 0 if maxbins == 0 else nbins + 1
 
-    nchannels += 1
-    nbins = 0 if maxbins == 0 else nbins + 1
+        if nframes > 1 and y > 0 and lines_in_frame > y + 1:
+            skip_last_frame = 1
+
+        if nframes == 0:
+            skip_first_frame = 0
+            skip_last_frame = 0
+        # elif nframes == 1:
+        #     # leave incomplete single frame
+        #     skip_first_frame = 0
+        #     skip_last_frame = 0
+        # elif nframes == 2:
+        #     if skip_first_frame and skip_last_frame:
+        #         # leave both incomplete frames
+        #         skip_first_frame = 0
+        #         skip_last_frame = 0
+        #     elif skip_first_frame or skip_last_frame:
+        #         # remove incomplete first xor last frame
+        #         nframes -= 1
+        else:
+            # remove incomplete first and/or last frames
+            if skip_first_frame:
+                nframes -= 1
+            if skip_last_frame and nframes > 0:
+                nframes -= 1
 
     return (
         format,
@@ -214,23 +245,23 @@ def _decode_info(
         maxbins,
         nbins,
         skip_first_frame,
+        skip_last_frame,
         time_in_lines // nlines if nlines > 0 else 0,
-        time_in_frames // nframes if nframes > 0 else 0,
         overflow + itime
     )
 
 
-def _decode_t3_point(
+def decode_t3_point(
     uint_t[:, :, ::1] histogram,
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
     const uint64_t pixel_time,
-    const ssize_t startc = 0,
     const ssize_t startt = 0,
+    const ssize_t startc = 0,
     const ssize_t starth = 0,
-    const ssize_t binc = 1,
     const ssize_t bint = 1,
+    const ssize_t binc = 1,
     const ssize_t binh = 1,
 ):
     """Return TCSPC histogram from TTTR T3 records of point measurement."""
@@ -243,22 +274,22 @@ def _decode_t3_point(
         ssize_t i, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &maxbins_, &i) != 0:
+    if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if maxbins_ == 0:
         raise NotImplementedError(f'not a T3 {format=:02x}')
 
     if startc < 0 or startt < 0 or starth < 0:
-        raise ValueError(f'invalid {startc=}, {startt=}, or {starth=}')
+        raise ValueError(f'invalid {startt=}, {startc=}, or {starth=}')
     if binc < 1 or bint < 1 or binh < 1:
-        raise ValueError(f'invalid {binc=}, {bint=}, or {binh=}')
-    if times.size != histogram.shape[1]:
+        raise ValueError(f'invalid {bint=}, {binc=}, or {binh=}')
+    if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
 
-    sizec, sizet, sizeh = histogram.shape[:3]
+    sizet, sizec, sizeh = histogram.shape[:3]
 
-    stopc = startc + sizec * binc
     stopt = startt + sizet * bint
+    stopc = startc + sizec * binc
     stoph = starth + sizeh * binh
 
     with nogil:
@@ -296,8 +327,8 @@ def _decode_t3_point(
                     times[iframe_binned] = time_global
 
                 histogram[
-                    (ichannel - startc) // binc,
                     iframe_binned,
+                    (ichannel - startc) // binc,
                     (idtime - starth) // binh,
                 ] += 1
             # elif ispecial == 1:
@@ -306,7 +337,7 @@ def _decode_t3_point(
             #     # no markers
 
 
-def _decode_t3_line(
+def decode_t3_line(
     uint_t[:, :, :, ::1] histogram,
     uint64_t[::1] times,
     const uint32_t[::1] records,
@@ -314,13 +345,13 @@ def _decode_t3_line(
     const uint64_t pixel_time,
     const uint32_t line_start,
     const uint32_t line_stop,
-    const ssize_t startc = 0,
     const ssize_t startt = 0,
     const ssize_t startx = 0,
+    const ssize_t startc = 0,
     const ssize_t starth = 0,
-    const ssize_t binc = 1,
     const ssize_t bint = 1,
     const ssize_t binx = 1,
+    const ssize_t binc = 1,
     const ssize_t binh = 1,
 ):
     """Return TCSPC histogram from TTTR T3 records of line scan measurement."""
@@ -334,25 +365,25 @@ def _decode_t3_line(
         ssize_t i, ix, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &maxbins_, &i) != 0:
+    if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if maxbins_ == 0:
         raise NotImplementedError(f'not a T3 {format=:02x}')
 
     if startc < 0 or startt < 0 or startx < 0 or starth < 0:
         raise ValueError(
-            f'invalid {startc=}, {startt=}, {startx=}, or {starth=}'
+            f'invalid {startt=}, {startx=}, {startc=}, or {starth=}'
         )
     if binc < 1 or bint < 1 or binx < 1 or binh < 1:
-        raise ValueError(f'invalid {binc=}, {bint=}, {binx=}, or {binh=}')
-    if times.size != histogram.shape[1]:
+        raise ValueError(f'invalid {bint=}, {binx=}, {binc=}, or {binh=}')
+    if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
 
-    sizec, sizet, sizex, sizeh = histogram.shape[:4]
+    sizet, sizex, sizec, sizeh = histogram.shape[:4]
 
-    stopc = startc + sizec * binc
     stopt = startt + sizet * bint
     stopx = startx + sizex * binx
+    stopc = startc + sizec * binc
     stoph = starth + sizeh * binh
 
     with nogil:
@@ -377,7 +408,6 @@ def _decode_t3_line(
                 # regular record
                 if (
                     time_line_start == 0  # no line start marker yet
-                    or iframe < startt
                     or ichannel < startc
                     or ichannel >= stopc
                     or idtime < starth
@@ -389,9 +419,9 @@ def _decode_t3_line(
                 if ix < startx or ix >= stopx:
                     continue
                 histogram[
-                    (ichannel - startc) // binc,
                     iframe_binned,
                     (ix - startx) // binx,
+                    (ichannel - startc) // binc,
                     (idtime - starth) // binh,
                 ] += 1
 
@@ -404,17 +434,14 @@ def _decode_t3_line(
                     iframe += 1
                     if iframe == stopt:
                         break
-                    if (
-                        iframe >= startt
-                        and iframe_binned != (iframe - startt) // bint
-                    ):
-                        iframe_binned = (iframe - startt) // bint
-                        times[iframe_binned] = time_global
-                if imarker & line_start:
+                if imarker & line_start and iframe >= startt:
                     time_line_start = time_global
+                    if iframe_binned != (iframe - startt) // bint:
+                        iframe_binned = (iframe - startt) // bint
+                        times[iframe_binned] = time_line_start
 
 
-def _decode_t3_image(
+def decode_t3_image(
     uint_t[:, :, :, :, ::1] histogram,
     uint64_t[::1] times,
     const uint32_t[::1] records,
@@ -423,17 +450,17 @@ def _decode_t3_image(
     const uint32_t line_start,
     const uint32_t line_stop,
     const uint32_t frame_change,
-    const ssize_t startc = 0,
     const ssize_t startt = 0,
     const ssize_t starty = 0,
     const ssize_t startx = 0,
+    const ssize_t startc = 0,
     const ssize_t starth = 0,
-    const ssize_t binc = 1,
     const ssize_t bint = 1,
     const ssize_t biny = 1,
     const ssize_t binx = 1,
+    const ssize_t binc = 1,
     const ssize_t binh = 1,
-    const bint skip_first_frame = 1
+    const bint skip_first_frame = 0
 ):
     """Return TCSPC histogram from TTTR T3 records of image measurement."""
     cdef:
@@ -443,40 +470,40 @@ def _decode_t3_image(
         uint64_t overflow, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        ssize_t i, ix, iy, iframe, iframe_binned, maxbins_
+        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &maxbins_, &i) != 0:
+    if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if maxbins_ == 0:
         raise NotImplementedError(f'not a T3 {format=:02x}')
 
     if startc < 0 or startt < 0 or starty < 0 or startx < 0 or starth < 0:
         raise ValueError(
-            f'invalid {startc=}, {startt=}, {starty=}, {startx=}, or {starth=}'
+            f'invalid {startt=}, {starty=}, {startx=}, {startc=}, or {starth=}'
         )
     if binc < 1 or bint < 1 or biny < 1 or binx < 1 or binh < 1:
         raise ValueError(
-            f'invalid {binc=}, {bint=}, {biny=}, {binx=}, or {binh=})'
+            f'invalid {bint=}, {biny=}, {binx=}, {binc=}, or {binh=})'
         )
-    if times.size != histogram.shape[1]:
+    if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
 
-    sizec, sizet, sizey, sizex, sizeh = histogram.shape[:5]
+    sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
 
-    stopc = startc + sizec * binc
     stopt = startt + sizet * bint
     stopy = starty + sizey * biny
     stopx = startx + sizex * binx
+    stopc = startc + sizec * binc
     stoph = starth + sizeh * binh
 
     with nogil:
         time_line_start = 0
         overflow = 0
-        # skip until first frame marker if more than one marker
-        iframe = -1 if skip_first_frame else 0
+        iframe = -2 if skip_first_frame else -1
         iframe_binned = -1
-        iy = 0
+        iy_binned = -1
+        iy = -1
         ix = 0
 
         # TODO: process channels/frames in parallel?
@@ -495,50 +522,52 @@ def _decode_t3_image(
                 # regular record
                 if (
                     time_line_start == 0  # no line start marker yet
-                    or iframe < startt
                     or ichannel < startc
                     or ichannel >= stopc
                     or idtime < starth
                     or idtime >= stoph
-                    or iy < starty
-                    or iy >= stopy
                 ):
                     continue
 
                 ix = (time_global - time_line_start) // pixel_time
-                if ix < startx or ix >= stopx:
-                    continue
-                histogram[
-                    (ichannel - startc) // binc,
-                    iframe_binned,
-                    (iy - starty) // biny,
-                    (ix - startx) // binx,
-                    (idtime - starth) // binh,
-                ] += 1
+                if ix >= startx and ix < stopx:
+                    histogram[
+                        iframe_binned,
+                        iy_binned,
+                        (ix - startx) // binx,
+                        (ichannel - startc) // binc,
+                        (idtime - starth) // binh,
+                    ] += 1
 
             # elif ispecial == 1:
             #     # overflow
             elif ispecial == 2:
                 # marker
                 if imarker & frame_change:
-                    iframe += 1
-                    if iframe == stopt:
-                        break
-                    if (
-                        iframe >= startt
-                        and iframe_binned != (iframe - startt) // bint
-                    ):
-                        iframe_binned = (iframe - startt) // bint
-                        times[iframe_binned] = time_global
-                    iy = 0
+                    time_line_start = 0
+                    iy = -1
                 if imarker & line_stop:
                     time_line_start = 0
-                    iy += 1
                 if imarker & line_start:
-                    time_line_start = time_global
+                    iy += 1
+                    if iy == 0:
+                        # new frame starts at first line
+                        # after start or frame change marker
+                        iframe += 1
+                        if iframe == stopt:
+                            break
+                    if iframe >= startt and iy >= starty and iy < stopy:
+                        iy_binned = (iy - starty) // biny
+                        time_line_start = time_global
+                        if iframe_binned != (iframe - startt) // bint:
+                            iframe_binned = (iframe - startt) // bint
+                            times[iframe_binned] = time_line_start
+                    else:
+                        # line is not part of selection
+                        time_line_start = 0
 
 
-def _decode_t3_histogram(
+def decode_t3_histogram(
     uint_t[:, ::1] histogram,
     const uint32_t[::1] records,
     const uint32_t format
@@ -552,7 +581,7 @@ def _decode_t3_histogram(
         uint8_t ispecial, imarker
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &nbins, &maxchannels) != 0:
+    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins == 0:
         raise ValueError(f'not a T3 {format=:02x}')
@@ -575,7 +604,7 @@ def _decode_t3_histogram(
                 histogram[ichannel, idtime] += 1
 
 
-def _decode_t2_histogram(
+def decode_t2_histogram(
     uint_t[:, ::1] histogram,
     const uint32_t[::1] records,
     const uint32_t format,
@@ -590,7 +619,7 @@ def _decode_t2_histogram(
         uint8_t ispecial, imarker
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &nbins, &maxchannels) != 0:
+    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins != 0:
         raise ValueError(f'not a T2 {format=:02x}')
@@ -618,7 +647,7 @@ def _decode_t2_histogram(
                 histogram[ichannel, ibin] += 1
 
 
-def _decode_t3_records(
+def decode_t3_records(
     t3_t[::1] decoded,
     const uint32_t[::1] records,
     const uint32_t format
@@ -632,7 +661,7 @@ def _decode_t3_records(
         uint8_t ispecial, imarker
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &nbins, &maxchannels) != 0:
+    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins == 0:
         raise ValueError(f'not a T3 {format=:02x}')
@@ -669,7 +698,7 @@ def _decode_t3_records(
                 decoded[i].marker = imarker
 
 
-def _decode_t2_records(
+def decode_t2_records(
     t2_t[::1] decoded,
     const uint32_t[::1] records,
     const uint32_t format
@@ -683,7 +712,7 @@ def _decode_t2_records(
         uint8_t ispecial, imarker
         decode_func_t decode_func
 
-    if _format(format, &decode_func, &nbins, &maxchannels) != 0:
+    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins != 0:
         raise ValueError(f'not a T2 {format=:02x}')
