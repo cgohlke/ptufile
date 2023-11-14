@@ -29,7 +29,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Read PicoQuant PTU and related files.
+"""Read PicoQuant(r) PTU and related files.
 
 Ptufile is a Python library to read image and metadata from PicoQuant PTU
 and related files: PHU, PCK, PCO, PFS, PUS, and PQRES.
@@ -41,7 +41,8 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.1
+:Version: 2023.11.13
+:DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
 ----------
@@ -63,13 +64,24 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.6, 3.12.0 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
+- `Numpy <https://pypi.org/project/numpy>`_ 1.26.1
 - `Xarray <https://pypi.org/project/xarray>`_ 2023.10.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.7.3 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.1 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2023.9.26 (optional)
 
 Revisions
 ---------
+
+2023.11.13
+
+- Change image histogram dimension order to TYXCH (breaking).
+- Change frame start to start of first line in frame (breaking).
+- Improve trimming of incomplete frames (breaking).
+- Remove trim_dtime option (breaking).
+- Fix selection handling in PtuFile.decode_image.
+- Add option to trim T, C, and H axes of image histograms.
+- Add option to decode histograms to memory-mapped or user-provided arrays.
+- Add ``__getitem__`` interface to image histogram.
 
 2023.11.1
 
@@ -88,13 +100,15 @@ and deprecated image reconstruction.
 
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
-<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_
+<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
-Other Python implementations for reading PicoQuant files are
+Other Python modules for reading PicoQuant files are
 `Read_PTU.py
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
-`picoquantio <https://github.com/tsbischof/picoquantio>`_, and
+`PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
+`picoquantio <https://github.com/tsbischof/picoquantio>`_,
+`ptuparser <https://pypi.org/project/ptuparser/>`_, and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
@@ -116,7 +130,7 @@ UUID('86d428e2-cb0b-4964-996c-04456ba6be7b')
 {...'CreatorSW_Name': 'SymPhoTime 64', 'CreatorSW_Version': '2.1'...}
 >>> pq.close()
 
-Read metadata from PicoQuant PTU FLIM file:
+Read metadata from a PicoQuant PTU FLIM file:
 
 >>> ptu = PtuFile('tests/FLIM.ptu')
 >>> ptu.magic
@@ -128,40 +142,57 @@ Read metadata from PicoQuant PTU FLIM file:
 >>> ptu.measurement_submode
 <PtuMeasurementSubMode.IMAGE: 3>
 
-Decode TTTR records from file to numpy.recarray and get global times of frame
-changes from the masks:
+Decode TTTR records from the PTU file to numpy.recarray. Get global times of
+frame changes from markers:
 
 >>> decoded = ptu.decode_records()
 >>> decoded['time'][(decoded['marker'] & ptu.frame_change_mask) > 0]
 array([1571185680], dtype=uint64)
 
-Decode TTTR records to delay-time histogram per channel:
+Decode TTTR records to overall delay-time histograms per channel:
 
->>> ptu.decode_histogram(dtype='uint8', asxarray=False)
+>>> ptu.decode_histogram(dtype='uint8')
 array([[ 5,  7,  7, ..., 10,  9,  2]], dtype=uint8)
 
-Read FLIM histogram as xarray, decoding only the first channel and
-integrating all histogram bins:
+Get information about the FLIM image histogram in the PTU file:
 
 >>> ptu.shape
-(2, 1, 256, 256, 3126)
+(1, 256, 256, 2, 3126)
 >>> ptu.dims
-('C', 'T', 'Y', 'X', 'H')
+('T', 'Y', 'X', 'C', 'H')
 >>> ptu.coords
 {'T': ..., 'Y': ..., 'X': ..., 'H': ...}
->>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)  # doctest: +SKIP
-<xarray.DataArray (C: 1, T: 1, Y: 256, X: 256, H: 1)>
-array([[[[[...]]]]], dtype=uint16)
+>>> ptu.dtype
+dtype('uint16')
+
+Decode parts of the image histogram to numpy array using slice notation.
+Slice step sizes define binning, -1 being used to integrate along axis:
+
+>>> ptu[:, ..., 0, ::-1]
+array([[[103, ..., 38],
+              ...
+        [ 47, ..., 30]]], dtype=uint16)
+
+Alternatively, decode the first channel and integrate all histogram bins
+to a xarray.DataArray, keeping reduced axes:
+
+>>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
+<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
+array([[[[[103]],
+           ...
+         [[ 30]]]]], dtype=uint16)
 Coordinates:
-    * T        (T) float64 0.0
-    * Y        (Y) float64 -0.0001304 -0.0001294 ... 0.0001284 0.0001294
-    * X        (X) float64 -0.0001304 -0.0001294 ... 0.0001284 0.0001294
-    * H        (H) float64 0.0
+  * T        (T) float64 0.05625
+  * Y        (Y) float64 -0.0001304 ... 0.0001294
+  * X        (X) float64 -0.0001304 ... 0.0001294
+  * H        (H) float64 0.0
 Dimensions without coordinates: C
+Attributes...
+    frequency:      15258789.123471113
 ...
 >>> ptu.close()
 
-View the image and metadata in a PTU file from the console::
+Preview the image and metadata in a PTU file from the console::
 
     $ python -m ptufile tests/FLIM.ptu
 
@@ -169,10 +200,11 @@ View the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2023.11.1'
+__version__ = '2023.11.13'
 
 __all__ = [
     'imread',
+    'logger',
     'PqFile',
     'PqFileError',
     'PqFileMagic',
@@ -199,47 +231,55 @@ from functools import cached_property
 from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
-    from typing import Any, BinaryIO
-
     from collections.abc import Sequence
+    from types import EllipsisType
+    from typing import Any, BinaryIO, Literal
 
-    from numpy.typing import NDArray, DTypeLike
+    from numpy.typing import DTypeLike, NDArray
     from xarray import DataArray
+
+    Dimension = Literal['T'] | Literal['C'] | Literal['H']
+    OutputType = str | BinaryIO | NDArray[Any] | None
+
 
 import numpy
 
 
 def imread(
     file: str | os.PathLike | BinaryIO,
-    selection: Sequence[int | slice | None] | None = None,
     /,
+    selection: Sequence[int | slice | EllipsisType | None] | None = None,
     *,
-    trim_dtime: bool = True,
     dtype: DTypeLike | None = None,
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    trimdims: Sequence[Dimension] | None = None,
+    keepdims: bool = True,
     asxarray: bool = False,
+    out: OutputType = None,
 ) -> NDArray[Any] | DataArray:
     """Return decoded image histogram from T3 mode PTU file.
 
     Parameters:
         file:
             File name or seekable binary stream.
-        selection, dtype, channel, frame, asxarray:
+        selection, dtype, channel, frame, dtime, keepdims, asxarray, out:
             Passed to :py:meth:`PtuFile.decode_image`.
-        trim_dtime:
+        trimdims:
             Passed to :py:class:`PtuFile`.
 
     """
-    with PtuFile(file, trim_dtime=trim_dtime) as ptu:
+    with PtuFile(file, trimdims=trimdims) as ptu:
         data = ptu.decode_image(
             selection,
             dtype=dtype,
             channel=channel,
             frame=frame,
             dtime=dtime,
+            keepdims=keepdims,
             asxarray=asxarray,
+            out=out,
         )
     return data
 
@@ -431,7 +471,15 @@ T3_RECORD_DTYPE = numpy.dtype(
 )
 """Numpy dtype of decoded T3 records."""
 
-FILE_EXTENSIONS = {'.ptu', '.phu', '.pck', '.pco', '.pfs', '.pus', '.pqres'}
+FILE_EXTENSIONS = {
+    '.ptu': PqFileMagic.PTU,
+    '.phu': PqFileMagic.PHU,
+    '.pck': PqFileMagic.PCK,
+    '.pco': PqFileMagic.PCO,
+    '.pfs': PqFileMagic.PFS,
+    '.pus': PqFileMagic.PFS,
+    '.pqres': PqFileMagic.PQRES,
+}
 """File extensions of PicoQuant tagged files."""
 
 
@@ -473,10 +521,11 @@ class PqFile:
     """PicoQuant unified tags."""
 
     _fh: BinaryIO
-    _close: bool
+    _close: bool  # file needs to be closed
     _data_offset: int  # position of raw data in file
 
     _MAGIC: set[PqFileMagic] = set(PqFileMagic)
+    _STR_: tuple[str, ...] = ('magic', 'version')  # attributes listed first
 
     def __init__(
         self,
@@ -673,13 +722,13 @@ class PqFile:
     def __str__(self) -> str:
         return indent(
             repr(self),
-            f'magic: {self.magic}',
-            f'version: {self.version}',
+            *(f'{name}: {getattr(self, name)!r}'[:160] for name in self._STR_),
             *(
                 f'{name}: {getattr(self, name)!r}'[:160]
                 for name in dir(self)
                 if not (
-                    name in {'tags', 'magic', 'version'}
+                    name in self._STR_
+                    or name in {'tags', 'name'}
                     or name.startswith('_')
                     or callable(getattr(self, name))
                 )
@@ -703,7 +752,8 @@ class PhuFile(PqFile):
     ``PhuFile`` instances are derived from :py:class:`PqFile`.
 
     Parameters:
-        file: File name or seekable binary stream.
+        file:
+            File name or seekable binary stream.
 
     Raises:
         PqFileError: File is not a PicoQuant PHU file or is corrupted.
@@ -711,6 +761,7 @@ class PhuFile(PqFile):
     """
 
     _MAGIC: set[PqFileMagic] = {PqFileMagic.PHU}
+    _STR_ = ('magic', 'version', 'measurement_mode', 'measurement_submode')
 
     def __init__(self, file: str | os.PathLike | BinaryIO, /) -> None:
         super().__init__(file)
@@ -745,11 +796,7 @@ class PhuFile(PqFile):
         return int(self.tags['HistoResult_NumberOfCurves'])
 
     def histograms(
-        self,
-        index: int | slice | None = None,
-        /,
-        *,
-        asxarray: bool = False,
+        self, index: int | slice | None = None, /, asxarray: bool = False
     ) -> tuple[NDArray[numpy.uint32] | DataArray, ...]:
         """Return sequences of histograms from file.
 
@@ -849,32 +896,56 @@ class PtuFile(PqFile):
     Parameters:
         file:
             File name or seekable binary stream.
-        trim_dtime:
-            If true (default), limit the number of T3 bins returned to the
-            largest non-zero delay time bin observed, else use record type's
-            default.
+        trimdims:
+            Axes to trim. The default is ``'TCH```:
+
+            - ``'T'``: remove incomplete first or last frame.
+            - ``'C'``: remove trailing channels not containing photons.
+              Else use record type's default :py:attr:`number_channels_max`.
+            - ``'H'``: remove trailing delay-time bins not containing photons.
+              Else use record type's default :py:attr:`number_bins_max`.
 
     Raises:
         PqFileError: File is not a PicoQuant PTU file or is corrupted.
 
     """
 
-    _trim_dtime: bool
+    _trimdims: set[str]
+    _asxarray: bool
+    _dtype: numpy.dtype
 
     _MAGIC: set[PqFileMagic] = {PqFileMagic.PTU}
+    _STR_ = (
+        'magic',
+        'version',
+        'type',
+        'measurement_mode',
+        'measurement_submode',
+        'shape',
+        'dims',
+        'coords',
+    )
 
     def __init__(
         self,
         file: str | os.PathLike | BinaryIO,
         /,
         *,
-        trim_dtime: bool = True,
+        trimdims: Sequence[Dimension] | None = None,
     ) -> None:
         super().__init__(file)
-        self._trim_dtime = bool(trim_dtime)
+        if trimdims is None:
+            self._trimdims = {'T', 'C', 'H'}
+        else:
+            self._trimdims = {ax.upper() for ax in trimdims}
+        self._dtype = numpy.dtype(numpy.uint16)
+        self._asxarray = False
 
     def __enter__(self) -> PtuFile:
         return self
+
+    def __getitem__(self, key: Any, /) -> NDArray[Any] | DataArray:
+        return self.decode_image(key, keepdims=False)
 
     @property
     def type(self) -> PtuRecordType:
@@ -887,23 +958,13 @@ class PtuFile(PqFile):
         return PtuRecordType(self.tags['TTResultFormat_TTTRRecType'])
 
     @property
-    def number_records(self) -> int:
-        """Number of TTTR records."""
-        return int(self.tags['TTResult_NumberOfRecords'])
-
-    @property
-    def syncrate(self) -> int:
-        """Counts per s as recorded at beginning of measurement."""
-        return int(self.tags['TTResult_SyncRate'])
-
-    @property
     def measurement_mode(self) -> PtuMeasurementMode:
         """Kind of TCSPC measurement: T2 or T3."""
         return PtuMeasurementMode(self.tags['Measurement_Mode'])
 
     @property
     def measurement_submode(self) -> PtuMeasurementSubMode:
-        """Sub-kind of measurement: Point, line, or image. scan"""
+        """Sub-kind of measurement: Point, line, or image scan."""
         return PtuMeasurementSubMode(self.tags['Measurement_SubMode'])
 
     @property
@@ -917,6 +978,11 @@ class PtuFile(PqFile):
         return float(self.tags.get('MeasDesc_Resolution', 0.0))
 
     @property
+    def number_records(self) -> int:
+        """Number of TTTR records."""
+        return int(self.tags['TTResult_NumberOfRecords'])
+
+    @property
     def number_photons(self) -> int:
         """Number of photons counted."""
         return self._info.photons
@@ -927,8 +993,8 @@ class PtuFile(PqFile):
         return self._info.markers
 
     @property
-    def number_frames(self) -> int:
-        """Number of frame markers."""
+    def number_images(self) -> int:
+        """Number of images separated by frame change markers."""
         return self._info.frames
 
     @property
@@ -972,7 +1038,7 @@ class PtuFile(PqFile):
 
     @property
     def frame_change_mask(self) -> int:
-        """Marker mask defining frame change, or 0 if not defined."""
+        """Marker mask defining image frame change, or 0 if not defined."""
         value = self.tags.get('ImgHdr_Frame', None)
         return 2 ** (value - 1) if value is not None else 0
 
@@ -996,31 +1062,36 @@ class PtuFile(PqFile):
 
     @property
     def global_line_time(self) -> int:
-        """Approximate global time per line.
+        """Global time per line, excluding retrace.
 
-        Multiply with global resolution to get time in s.
+        Might be approximate. Multiply with global resolution to get time in s.
+
         """
         if 'ImgHdr_TimePerPixel' in self.tags:
             linetime = self.pixels_in_line * self.global_pixel_time
         elif self._info.lines > 0:
             linetime = self._info.line_time
         else:
+            # point scan: line of one pixel
             linetime = 1e-3 / self.tags['MeasDesc_GlobalResolution']
         return int(round(linetime))
 
     @property
     def global_frame_time(self) -> int:
-        """Approximate global time per frame.
+        """Global time per image, line, or point scan cycle, excluding retrace.
 
         Multiply with global resolution to get time in s.
         """
-        if self._info.frames > 0:
-            # image average includes retrace, etc
-            return self._info.frame_time
+        if self.tags['Measurement_SubMode'] == 3:
+            # image, including retrace
+            if self._info.frames == 0:
+                return self._info.acquisition_time
+            else:
+                return self._info.acquisition_time // self._info.frames
         if self._info.lines > 0:
-            # line scan average includes retrace, etc
+            # line scan
             return self._info.line_time
-        # does not include retrace, etc
+        # point scan
         return self.pixels_in_frame * self.global_pixel_time
 
     @property
@@ -1034,7 +1105,7 @@ class PtuFile(PqFile):
 
     @property
     def pixels_in_frame(self) -> int:
-        """Number of pixels in frame."""
+        """Number of pixels in one scan cycle."""
         return self.lines_in_frame * self.pixels_in_line
 
     @property
@@ -1077,7 +1148,10 @@ class PtuFile(PqFile):
 
     @property
     def frame_time(self) -> float:
-        """Average time between frame markers or ``line_time`` in s."""
+        """Time per image, line, or point scan cycle in s.
+
+        Image scan times include retrace.
+        """
         return self.global_frame_time * self.global_resolution
 
     @property
@@ -1096,94 +1170,10 @@ class PtuFile(PqFile):
         )
         return 1 / period if period > 1e-14 else 0
 
-    @cached_property
-    def shape(self) -> tuple[int, ...]:
-        """Shape of image histogram array."""
-        if not self.is_t3:
-            return ()
-        nbins = self.number_bins if self._trim_dtime else self.number_bins_max
-        nchannels = max(self.number_channels, 1)
-        ndim = self.tags['Measurement_SubMode']
-        if ndim == 3:
-            return (
-                nchannels,
-                max(self.number_frames, 1),
-                self.lines_in_frame,
-                self.pixels_in_line,
-                nbins,
-            )
-        if ndim == 2:
-            return (
-                nchannels,
-                max(self.number_lines, 1),
-                self.pixels_in_line,
-                nbins,
-            )
-        if ndim in {0, 1}:
-            return (
-                nchannels,
-                max(1, self._info.photons // self.global_pixel_time),
-                nbins,
-            )
-        return ()
-
-    @cached_property
-    def dims(self) -> tuple[str, ...]:
-        """Axes labels for each dimension in image histogram array
-
-        - ``'C'`` channel
-        - ``'T'`` time frame
-        - ``'Y'`` slow scan axis
-        - ``'X'`` fast scan axis
-        - ``'H'`` histogram bins
-
-        """
-        if not self.shape:
-            return ()
-        ndim = self.tags['Measurement_SubMode']
-        if ndim == 3:
-            return ('C', 'T', 'Y', 'X', 'H')
-        if ndim == 2:
-            return ('C', 'T', 'X', 'H')
-        return ('C', 'T', 'H')
-
-    @cached_property
-    def coords(self) -> dict[str, NDArray]:
-        """Coordinate arrays labelling each point in image histogram array.
-
-        Coordinates for the time axis are approximate. Exact coordinates are
-        returned with :py:meth:`PtuFile.decode_image` xarray.Dataset arrays.
-
-        """
-        if not self.shape:
-            return {}
-        ndim = self.tags['Measurement_SubMode']
-        coords = {}
-        shape = self.shape
-        # exact time coordinates must be decoded from records
-        coords['T'] = numpy.linspace(
-            0, shape[1] * self.frame_time, shape[1], endpoint=False
-        )
-        res = self.tags.get('ImgHdr_PixResol', None)
-        if res is not None:
-            res *= 1e-6  # um
-            if ndim > 2:
-                offset = self.tags.get('ImgHdr_Y0', 0.0) * 1e-6  # um
-                coords['Y'] = numpy.linspace(
-                    offset, offset + shape[-3] * res, shape[-3], endpoint=False
-                )
-            if ndim > 1:
-                offset = self.tags.get('ImgHdr_X0', 0.0) * 1e-6
-                coords['X'] = numpy.linspace(
-                    offset, offset + shape[-2] * res, shape[-2], endpoint=False
-                )
-        coords['H'] = numpy.linspace(
-            0,
-            shape[-1] * self.tags['MeasDesc_Resolution'],
-            shape[-1],
-            endpoint=False,
-        )
-        return coords
+    @property
+    def syncrate(self) -> int:
+        """Counts per s as recorded at beginning of measurement."""
+        return int(self.tags['TTResult_SyncRate'])
 
     @property
     def is_image(self) -> bool:
@@ -1208,29 +1198,169 @@ class PtuFile(PqFile):
         """Bidirectional scan mode."""
         return self.tags.get('ImgHdr_BiDirect', False)
 
+    @property
+    def use_xarray(self) -> bool:
+        """Return histograms as xarray.DataArray."""
+        return self._asxarray
+
+    @use_xarray.setter
+    def use_xarray(self, value: bool | None, /) -> None:
+        self._asxarray = bool(value)
+
+    @property
+    def dtype(self) -> numpy.dtype:
+        """Data type of image histogram array."""
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, dtype: DTypeLike | None, /) -> None:
+        dtype = numpy.dtype('uint16' if dtype is None else dtype)
+        if dtype.kind != 'u':
+            raise ValueError(f'{dtype=!r} not an unsigned integer')
+        self._dtype = dtype
+
+    @cached_property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of image histogram array."""
+        if not self.is_t3:
+            return ()
+
+        if 'C' in self._trimdims:
+            nchannels = max(self.number_channels, 1)
+        else:
+            nchannels = self.number_channels_max
+        if 'H' in self._trimdims:
+            nbins = self.number_bins
+        else:
+            nbins = self.number_bins_max
+
+        ndim = self.tags['Measurement_SubMode']
+        if ndim == 3:
+            return (
+                max(self._info.frames, 1),
+                self.lines_in_frame,
+                self.pixels_in_line,
+                nchannels,
+                nbins,
+            )
+        if ndim == 2:
+            return (
+                max(self._info.lines, 1),
+                self.pixels_in_line,
+                nchannels,
+                nbins,
+            )
+        if ndim in {0, 1}:
+            return (
+                max(1, self._info.photons // self.global_pixel_time),
+                nchannels,
+                nbins,
+            )
+        return ()
+
+    @cached_property
+    def dims(self) -> tuple[str, ...]:
+        """Axes labels for each dimension in image histogram array."""
+        if not self.shape:
+            return ()
+        ndim = self.tags['Measurement_SubMode']
+        if ndim == 3:
+            return ('T', 'Y', 'X', 'C', 'H')
+        if ndim == 2:
+            return ('T', 'X', 'C', 'H')
+        return ('T', 'C', 'H')
+
+    @property
+    def ndims(self) -> int:
+        """Number of dimensions in image histogram array."""
+        return len(self.dims)
+
+    @cached_property
+    def coords(self) -> dict[str, NDArray]:
+        """Coordinate arrays labelling each point in image histogram array.
+
+        Coordinates for the time axis are approximate. Exact coordinates are
+        returned with :py:meth:`PtuFile.decode_image` xarray.Dataset arrays.
+
+        """
+        if not self.shape:
+            return {}
+        ndim = self.tags['Measurement_SubMode']
+        coords = {}
+        shape = self.shape
+        # exact time coordinates must be decoded from records
+        coords['T'] = numpy.linspace(
+            0, shape[0] * self.frame_time, shape[0], endpoint=False
+        )
+        res = self.tags.get('ImgHdr_PixResol', None)
+        if res is not None:
+            res *= 1e-6  # um
+            if ndim > 2:
+                offset = self.tags.get('ImgHdr_Y0', 0.0) * 1e-6  # um
+                coords['Y'] = numpy.linspace(
+                    offset, offset + shape[-4] * res, shape[-4], endpoint=False
+                )
+            if ndim > 1:
+                offset = self.tags.get('ImgHdr_X0', 0.0) * 1e-6
+                coords['X'] = numpy.linspace(
+                    offset, offset + shape[-3] * res, shape[-3], endpoint=False
+                )
+        coords['H'] = numpy.linspace(
+            0,
+            shape[-1] * self.tags['MeasDesc_Resolution'],
+            shape[-1],
+            endpoint=False,
+        )
+        return coords
+
     @cached_property
     def _info(self) -> PtuInfo:
         """Information about decoded records."""
-        from ._ptufile import _decode_info
+        from ._ptufile import decode_info
+
+        lines_in_frame = 0
+        if (
+            'T' in self._trimdims
+            and 'ImgHdr_PixY' in self.tags
+            and self.tags['Measurement_SubMode'] == 3
+        ):
+            lines_in_frame = max(1, self.tags['ImgHdr_PixY'])
 
         return PtuInfo(
-            *_decode_info(
+            *decode_info(
                 self.read_records(),
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.line_start_mask,
                 self.line_stop_mask,
                 self.frame_change_mask,
+                lines_in_frame,
             )
         )
 
-    def read_records(self) -> NDArray[numpy.uint32]:
-        """Return encoded TTTR records from file."""
+    def read_records(self, *, memmap: bool = False) -> NDArray[numpy.uint32]:
+        """Return encoded TTTR records from file.
+
+        Parameters:
+            memmap:
+                If true, memory-map the records in the file.
+                By default, read the records from file into main memory.
+
+        """
         if self.tags['TTResultFormat_BitsPerRecord'] not in {0, 32}:
             raise ValueError(
                 'invalid bits per record '
                 f"{self.tags['TTResultFormat_BitsPerRecord']}"
             )
         count = self.tags['TTResult_NumberOfRecords']
+        result: Any
+        if memmap:
+            return numpy.memmap(
+                self._fh,  # type: ignore
+                dtype=numpy.uint32,
+                mode='r',
+                offset=self._data_offset,
+                shape=(count,),
+            )
         result = numpy.empty(count, numpy.uint32)
         self._fh.seek(self._data_offset)
         n = self._fh.readinto(result)  # type: ignore
@@ -1239,58 +1369,94 @@ class PtuFile(PqFile):
             result = result[: n // 4]
         return result
 
-    def decode_records(self) -> NDArray[Any]:
-        """Return decoded TTTR records from file as.
+    def decode_records(
+        self,
+        records: NDArray[numpy.uint32] | None = None,
+        /,
+        *,
+        out: OutputType = None,
+    ) -> NDArray[Any]:
+        """Return decoded TTTR records.
 
-        The returned ``numpy.recarray`` has :py:attr:`T3_RECORD_DTYPE`
-        or :py:attr:`T2_RECORD_DTYPE` dtype.
+        Parameters:
+            records:
+                Encoded TTTR records. By default, read records from file.
+            out:
+                Specifies where to decode records.
+                If ``None``, create a new NumPy recarray in main memory.
+                If ``'memmap'``, create a memory-mapped recarray in a
+                temporary file.
+                If a ``numpy.ndarray``, a writable recarray of compatible
+                shape and dtype.
+                If a ``file name`` or ``open file``, create a
+                memory-mapped array in specified file.
 
-        A channel > 0 indicates a record contained a photon.
-        Else, the record contained an overflow event or marker mask > 0.
+        Returns:
+            :
+                ``numpy.recarray`` of size :py:attr:`number_records` and dtype
+                :py:attr:`T3_RECORD_DTYPE` or :py:attr:`T2_RECORD_DTYPE`.
+
+                A channel >= 0 indicates a record contains a photon.
+                Else, the record contains an overflow event or marker > 0.
 
         """
-        from ._ptufile import _decode_t2_records, _decode_t3_records
+        from ._ptufile import decode_t2_records, decode_t3_records
 
-        records = self.read_records()
+        if records is None:
+            records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
         if self.is_t3:
-            result = numpy.zeros(records.size, T3_RECORD_DTYPE)
-            _decode_t3_records(result, records, rectype)
+            result = create_output(out, (records.size,), T3_RECORD_DTYPE)
+            decode_t3_records(result, records, rectype)
         else:
-            result = numpy.zeros(records.size, T2_RECORD_DTYPE)
-            _decode_t2_records(result, records, rectype)
+            result = create_output(out, (records.size,), T2_RECORD_DTYPE)
+            decode_t2_records(result, records, rectype)
         return result
 
     def decode_histogram(
         self,
         /,
         *,
+        records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
-        asxarray: bool | None = None,
         sampling_time: int | None = None,
+        asxarray: bool = False,
+        out: OutputType = None,
     ) -> NDArray[Any] | DataArray:
-        """Return histogram.
+        """Return histogram of all photons by channel.
 
         Parameters:
+            records:
+                Encoded TTTR records. By default, read records from file.
             dtype:
                 Unsigned integer type of histogram array.
                 The default is ``uint32`` for T3, else ``uint16``.
-            asxarray:
-                If true, return histogram as ``xarray.DataArray``,
-                else ``numpy.ndarray`` (default).
+                Increase the bit depth to avoid overflows.
             sampling_time:
                 Global time per sample for T2 mode.
                 The default is :py:meth:`PtuFile.global_pixel_time`.
+            asxarray:
+                If true, return ``xarray.DataArray``, else ``numpy.ndarray``
+                (default).
+            out:
+                Specifies where to decode histogram.
+                If ``None``, create a new NumPy array in main memory.
+                If ``'memmap'``, create a memory-mapped array in a
+                temporary file.
+                If a ``numpy.ndarray``, a writable, initialized array
+                of :py:attr:`shape` and unsigned integer dtype.
+                If a ``file name`` or ``open file``, create a
+                memory-mapped array in the specified file.
 
         Returns:
             :
-                Decoded TTTR T3 records as 2-dimensional histogram:
+                Decoded TTTR T3 records as 2-dimensional histogram array:
 
                 - ``'C'`` channel
                 - ``'H'`` histogram bins
 
         """
-        from ._ptufile import _decode_t2_histogram, _decode_t3_histogram
+        from ._ptufile import decode_t2_histogram, decode_t3_histogram
 
         if dtype is None:
             dtype = numpy.uint32 if self.is_t3 else numpy.uint16
@@ -1298,31 +1464,37 @@ class PtuFile(PqFile):
         if dtype.kind != 'u':
             raise ValueError(f'not an unsigned integer {dtype=!r}')
 
-        records = self.read_records()
+        if records is None:
+            records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
 
         if self.is_t3:
-            histogram = numpy.zeros((self.shape[0], self.shape[-1]), dtype)
-            _decode_t3_histogram(histogram, records, rectype)
+            histogram = create_output(
+                out, (self.shape[-2], self.shape[-1]), dtype
+            )
+            decode_t3_histogram(histogram, records, rectype)
             coords = self.coords['H']
         else:
             if sampling_time is None or sampling_time <= 0:
-                nbins = self.global_acquisition_time // self.global_pixel_time
-            else:
-                nbins = self.global_acquisition_time // sampling_time
-            histogram = numpy.zeros(
-                (self.number_channels, max(1, nbins)), dtype
+                sampling_time = self.global_pixel_time
+            histogram = create_output(
+                out,
+                (
+                    self.number_channels,
+                    max(1, self.global_acquisition_time // sampling_time),
+                ),
+                dtype,
             )
-            _decode_t2_histogram(
+            decode_t2_histogram(
                 histogram,
                 records,
                 rectype,
-                self.global_pixel_time,
+                sampling_time,
             )
             coords = numpy.linspace(
                 0, self.acquisition_time, histogram.shape[1], endpoint=False
             )
-        if not asxarray:
+        if not self._asxarray and not asxarray:
             return histogram
 
         from xarray import DataArray
@@ -1335,54 +1507,73 @@ class PtuFile(PqFile):
 
     def decode_image(
         self,
-        selection: Sequence[int | slice | None] | None = None,
+        selection: Sequence[int | slice | EllipsisType | None] | None = None,
         /,
         *,
+        records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
-        channel: int | None = None,  # -1 integrate, >=0 index
-        frame: int | None = None,  # -1 integrate, >=0 index
-        dtime: int | None = None,  # -1 integrate, >=0 index
-        asxarray: bool | None = None,
+        frame: int | None = None,
+        channel: int | None = None,
+        dtime: int | None = None,
+        keepdims: bool = True,
+        asxarray: bool = False,
+        out: OutputType = None,
     ) -> NDArray[Any] | DataArray:
         """Return T3 mode point, line, or image histogram.
 
+        The histogram may not include photons counted during incomplete frame
+        scans or during line retraces.
+
         Parameters:
             selection:
-                Sequence of indices for all dimensions:
+                Indices for all dimensions:
 
-                    - ``None`` (default) selects all items along axis.
-                    - ``int`` selects single item along axis.
-                    - ``slice`` with ``step`` setting binning factor
-                      and ``step=-1`` integrating all items along axis.
+                    - ``None``: return all items along axis (default).
+                    - ``Ellipsis``: return all items along multiple axes.
+                    - ``int``: return single item along axis.
+                    - ``slice``: return chunk of axis.
+                      ``slice.step`` is binning factor.
+                      If ``slice.step=-1``, integrate all items along axis.
 
+            records:
+                Encoded TTTR records. By default, read records from file.
             dtype:
-                Unsigned integer type of histogram array.
-                The default is ``uint16``.
-                Increase to avoid overflows, especially when integrating.
-            channel:
-                If < 0, integrate channel axis, else select specific channel.
-                Overrides ``selection`` for ``C`` axis.
+                Unsigned integer type of image histogram array.
+                The default is ``uint16``. Increase the bit depth to avoid
+                overflows when integrating.
             frame:
-                If < 0, integrate time axis, else select specific frame.
-                Overrides ``selection`` for ``T`` axis.
+                If < 0, integrate time axis, else return specified frame.
+                Overrides ``selection`` for axis ``T``.
+            channel:
+                If < 0, integrate channel axis, else return specified channel.
+                Overrides ``selection`` for axis ``C``.
             dtime:
-                If < 0, integrate time axis, else select specific frame.
-                Overrides ``selection`` for ``H`` axis.
+                If < 0, integrate delay time axis, else return specified bin.
+                Overrides ``selection`` for axis ``H``.
+            keepdims:
+                If true (default), reduced axes are left as size-one dimension.
             asxarray:
-                If true, return histograms as ``xarray.DataArray``,
-                else ``numpy.ndarray`` (default).
+                If true, return ``xarray.DataArray``, else ``numpy.ndarray``
+                (default).
+            out:
+                Specifies where to decode image histogram.
+                If ``None``, create a new NumPy array in main memory.
+                If ``'memmap'``, create a memory-mapped array in a
+                temporary file.
+                If a ``numpy.ndarray``, a writable, initialized array
+                of :py:attr:`shape` and unsigned integer dtype.
+                If a ``file name`` or ``open file``, create a
+                memory-mapped array in the specified file.
 
         Returns:
             :
-                Decoded TTTR T3 records as 3-5-dimensional image array:
+                Decoded TTTR T3 records as up to 5-dimensional image array:
 
-                - ``'C'`` channel
                 - ``'T'`` time/frame
                 - ``'Y'`` slow scan axis for image scans
                 - ``'X'`` fast scan axis for line and image scans
+                - ``'C'`` channel
                 - ``'H'`` histogram bins
-
-                Singular ``C``, ``T``, and ``H`` dimensions are not removed.
 
         Raises:
             NotImplementedError:
@@ -1410,24 +1601,44 @@ class PtuFile(PqFile):
 
         shape = list(self.shape)
         ndim = len(shape)
+        keepaxes: list[slice | int] = [slice(None)] * ndim
 
         if selection is None:
             selection = [None] * ndim
-        elif len(selection) < ndim:
-            selection = list(selection) + [None] * (ndim - len(selection))
-        elif len(selection) > ndim:
-            raise IndexError('too many indices in selection')
         else:
-            selection = list(selection).copy()
+            try:
+                len(selection)  # type: ignore
+            except TypeError:
+                selection = [selection]  # type: ignore
 
-        if channel is not None:
-            if channel >= shape[0]:
-                raise IndexError(f'{channel=} out of range')
-            selection[0] = channel if channel >= 0 else slice(None, None, -1)
+            if len(selection) > ndim:
+                raise IndexError(f'too many indices in {selection=}')
+            elif len(selection) == ndim:
+                selection = list(selection).copy()
+                if Ellipsis in selection:
+                    selection[selection.index(Ellipsis)] = None
+            # elif len(selection) < ndim:
+            elif Ellipsis in selection:
+                selection = list(selection).copy()
+                i = selection.index(Ellipsis)
+                selection = (
+                    selection[:i]
+                    + ([None] * (1 + ndim - len(selection)))
+                    + selection[i + 1 :]
+                )
+            else:
+                selection = list(selection) + [None] * (ndim - len(selection))
+            if Ellipsis in selection:
+                raise IndexError(f'more than one Ellipsis in {selection=}')
+
         if frame is not None:
-            if frame >= shape[1]:
+            if frame >= shape[0]:
                 raise IndexError(f'{frame=} out of range')
-            selection[1] = frame if frame >= 0 else slice(None, None, -1)
+            selection[0] = frame if frame >= 0 else slice(None, None, -1)
+        if channel is not None:
+            if channel >= shape[-2]:
+                raise IndexError(f'{channel=} out of range')
+            selection[-2] = channel if channel >= 0 else slice(None, None, -1)
         if dtime is not None:
             if dtime >= shape[-1]:
                 raise IndexError(f'{dtime=} out of range')
@@ -1439,24 +1650,38 @@ class PtuFile(PqFile):
             if index is None:
                 pass
             elif isinstance(index, int):
+                if index < 0:
+                    index %= shape[i]
                 if not 0 <= index < size:
-                    raise IndexError(f'axis {i} index out of range')
+                    raise IndexError(f'axis {i} {index=} out of range')
                 start[i] = index
                 shape[i] = 1
+                keepaxes[i] = 0
             elif isinstance(index, slice):
-                if index.start is not None:
-                    if index.start >= shape[i]:
-                        raise IndexError(f'axis {i} slice.start out of range')
-                    start[i] = index.start % shape[i]
+                istart = index.start
+                if istart is not None:
+                    if istart < 0:
+                        istart %= shape[i]
+                    if not 0 <= istart < shape[i]:
+                        raise IndexError(
+                            f'axis {i} {index=} start out of range'
+                        )
+                    start[i] = istart
                 if index.stop is not None:
-                    if index.stop % shape[i] <= start[i]:
-                        raise IndexError(f'axis {i} slice.stop < start')
-                    shape[i] = index.stop % shape[i]
+                    istop = index.stop
+                    if istop < 0:
+                        istop %= shape[i]
+                    if not start[i] < istop <= shape[i]:
+                        raise IndexError(
+                            f'axis {i} {index=} stop out of range'
+                        )
+                    shape[i] = istop
                 shape[i] -= start[i]
                 if index.step is not None:
                     if index.step < 0:
                         # negative step size -> integrate all
                         step[i] = shape[i]
+                        keepaxes[i] = 0
                     else:
                         step[i] = min(index.step, shape[i])
                     shape[i] = shape[i] // step[i] + min(1, shape[i] % step[i])
@@ -1466,25 +1691,25 @@ class PtuFile(PqFile):
                 )
 
         if dtype is None:
-            dtype = numpy.uint16
-        dtype = numpy.dtype(dtype)
-        if dtype.kind != 'u':
-            raise ValueError(f'not an unsigned integer {dtype=!r}')
+            dtype = self._dtype
+        else:
+            dtype = numpy.dtype(dtype)
+            if dtype.kind != 'u':
+                raise ValueError(f'not an unsigned integer {dtype=!r}')
 
-        histogram = numpy.zeros(shape, dtype)
-        times = numpy.zeros(shape[1], numpy.uint64)
+        histogram = create_output(out, tuple(shape), dtype)
+        times = numpy.zeros(shape[0], numpy.uint64)
 
-        from ._ptufile import (
-            _decode_t3_image,
-            _decode_t3_line,
-            _decode_t3_point,
-        )
+        from ._ptufile import decode_t3_image, decode_t3_line, decode_t3_point
+
+        if records is None:
+            records = self.read_records()
 
         if ndim == 5:
-            _decode_t3_image(
+            decode_t3_image(
                 histogram,
                 times,
-                self.read_records(),
+                records,
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.global_pixel_time,
                 self.line_start_mask,
@@ -1496,10 +1721,10 @@ class PtuFile(PqFile):
             )
         elif ndim == 4:
             # not tested
-            _decode_t3_line(
+            decode_t3_line(
                 histogram,
                 times,
-                self.read_records(),
+                records,
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.global_pixel_time,
                 self.line_start_mask,
@@ -1508,34 +1733,46 @@ class PtuFile(PqFile):
                 *step,
             )
         elif ndim == 3:
-            _decode_t3_point(
+            decode_t3_point(
                 histogram,
                 times,
-                self.read_records(),
+                records,
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.global_pixel_time,
                 *start,
                 *step,
             )
 
-        if not asxarray:
+        if not keepdims:
+            histogram = histogram[tuple(keepaxes)]
+
+        if not self._asxarray and not asxarray:
             return histogram
 
         from xarray import DataArray
 
+        dims = []
         coords = self.coords.copy()
         for i, ax in enumerate(self.dims):
-            if ax in coords:
-                index = slice(start[i], start[i] + shape[i] * step[i], step[i])
-                coords[ax] = coords[ax][index]
-        coords['T'] = times * self.global_resolution
+            if keepdims or keepaxes[i] != 0:
+                dims.append(ax)
+                if ax in coords:
+                    index = slice(
+                        start[i], start[i] + shape[i] * step[i], step[i]
+                    )
+                    coords[ax] = coords[ax][index]
+            elif ax in coords:
+                del coords[ax]
+        if 'T' in dims:
+            coords['T'] = times * self.global_resolution
         attrs = {
             'frequency': self.frequency,
             'max_delaytime': self.number_bins_max,
         }
+
         return DataArray(
             histogram,
-            dims=self.dims,
+            dims=dims,
             coords=coords,
             attrs=attrs,
             # name=self.name,
@@ -1571,14 +1808,14 @@ class PtuFile(PqFile):
                 and not self.is_bidirectional
             ):
                 t.start()
-                histogram: Any = self.decode_image(dtime=-1, asxarray=verbose)
+                histogram: Any = self.decode_image(dtime=-1, asxarray=True)
                 if verbose:
                     print()
                     t.print('decode_image')
                     print()
                     print(histogram)
                 imshow(
-                    (histogram.values if verbose else histogram).squeeze(),
+                    numpy.moveaxis(histogram.values, -2, 0).squeeze(),
                     title=repr(self),
                     photometric='minisblack',
                 )
@@ -1602,7 +1839,6 @@ class PtuFile(PqFile):
         pyplot.title(repr(self))
         pyplot.xlabel('delay time [s]' if self.is_t3 else 'time [s]')
         pyplot.ylabel('photon count')
-        pyplot.ylim(0, None)
         pyplot.legend()
         if show:
             pyplot.show()
@@ -1612,7 +1848,8 @@ class PtuFile(PqFile):
 class PtuInfo:
     """Information about decoded TTTR records.
 
-    Returned by ``_ptufile._decode_info``.
+    Returned by ``_ptufile.decode_info``.
+
     """
 
     format: int
@@ -1628,7 +1865,7 @@ class PtuInfo:
     """Number of marker events."""
 
     frames: int
-    """Number of frame markers."""
+    """Number of frames detected. May exclude incomplete frames."""
 
     lines: int
     """Number of lines between line markers."""
@@ -1646,41 +1883,76 @@ class PtuInfo:
     """Highest delay time observed. Not available for T2 records."""
 
     skip_first_frame: bool
-    """More than two frame markers counted."""
+    """First frame of multi-frame image is incomplete."""
+
+    skip_last_frame: bool
+    """Last frame of multi-frame image is incomplete."""
 
     line_time: int
     """Average global time between line markers."""
-
-    frame_time: int
-    """Average global time between frame markers."""
 
     acquisition_time: int
     """Global time of last sync event."""
 
     def __str__(self) -> str:
-        return '\n'.join(
-            (
-                f'{self.__class__.__name__}(',
-                *(
-                    f'    {key}={value},'
-                    for key, value in self.__dict__.items()
-                ),
-                ')',
-            )
+        return indent(
+            f'{self.__class__.__name__}(',
+            *(f'{key}={value},' for key, value in self.__dict__.items()),
+            end='\n)',
         )
 
 
-def indent(*args) -> str:
+def create_output(
+    out: str | BinaryIO | NDArray[Any] | None,
+    /,
+    shape: tuple[int, ...],
+    dtype: numpy.dtype,
+) -> NDArray[Any] | numpy.memmap:
+    """Return NumPy array where images of shape and dtype can be copied."""
+    if out is None:
+        return numpy.zeros(shape, dtype)
+    if isinstance(out, numpy.ndarray):
+        out.shape = shape
+        return out
+    if isinstance(out, str) and out[:6] == 'memmap':
+        import tempfile
+
+        tempdir = out[7:] if len(out) > 7 else None
+        with tempfile.NamedTemporaryFile(dir=tempdir, suffix='.memmap') as fh:
+            return numpy.memmap(fh, shape=shape, dtype=dtype, mode='w+')
+    return numpy.memmap(out, shape=shape, dtype=dtype, mode='w+')
+
+
+def indent(*args: Any, sep='', end='') -> str:
     """Return joined string representations of objects with indented lines."""
-    text = "\n".join(str(arg) for arg in args)
-    return "\n".join(
-        ("  " + line if line else line) for line in text.splitlines() if line
-    )[2:]
+    text = (sep + '\n').join(
+        arg if isinstance(arg, str) else repr(arg) for arg in args
+    )
+    return (
+        '\n'.join(
+            ('    ' + line if line else line)
+            for line in text.splitlines()
+            if line
+        )[4:]
+        + end
+    )
 
 
 def logger() -> logging.Logger:
     """Return logging.getLogger('ptufile')."""
     return logging.getLogger(__name__.replace('ptufile.ptufile', 'ptufile'))
+
+
+def askopenfilename(**kwargs: Any) -> str:
+    """Return file name(s) from Tkinter's file open dialog."""
+    from tkinter import Tk, filedialog
+
+    root = Tk()
+    root.withdraw()
+    root.update()
+    filenames = filedialog.askopenfilename(**kwargs)
+    root.destroy()
+    return filenames
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1696,19 +1968,17 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv
 
-    if len(argv) > 1 and '--doctest' in argv:
-        import doctest
-
-        try:
-            import ptufile.ptufile as m
-        except ImportError:
-            m = None  # type: ignore
-        doctest.testmod(m, optionflags=doctest.ELLIPSIS)
-        return 0
-
-    extensions: set[str] | None = FILE_EXTENSIONS
+    extensions: set[str] | None = set(FILE_EXTENSIONS.keys())
     if len(argv) == 1:
-        files = glob('*.p*')
+        path = askopenfilename(
+            title='Select a TIFF file',
+            filetypes=[
+                (f'{ext.upper()} files', f'*{ext}')
+                for ext in FILE_EXTENSIONS.keys()
+            ]
+            + [('allfiles', '*')],
+        )
+        files = [path] if path else []
     elif '*' in argv[1]:
         files = glob(argv[1])
     elif os.path.isdir(argv[1]):
@@ -1729,6 +1999,7 @@ def main(argv: list[str] | None = None) -> int:
                     with PtuFile(fname) as ptu:
                         # TODO: print decoding time
                         print(ptu)
+                        print(ptu._info)
                         try:
                             ptu.plot(verbose=True)
                         except NotImplementedError as exc:
