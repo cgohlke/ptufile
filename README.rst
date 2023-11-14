@@ -1,5 +1,5 @@
-Read PicoQuant PTU and related files
-====================================
+Read PicoQuant(r) PTU and related files
+=======================================
 
 Ptufile is a Python library to read image and metadata from PicoQuant PTU
 and related files: PHU, PCK, PCO, PFS, PUS, and PQRES.
@@ -11,7 +11,8 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.1
+:Version: 2023.11.13
+:DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
 ----------
@@ -33,13 +34,24 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.6, 3.12.0 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.25.2
+- `Numpy <https://pypi.org/project/numpy>`_ 1.26.1
 - `Xarray <https://pypi.org/project/xarray>`_ 2023.10.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.7.3 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.1 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2023.9.26 (optional)
 
 Revisions
 ---------
+
+2023.11.13
+
+- Change image histogram dimension order to TYXCH (breaking).
+- Change frame start to start of first line in frame (breaking).
+- Improve trimming of incomplete frames (breaking).
+- Remove trim_dtime option (breaking).
+- Fix selection handling in PtuFile.decode_image.
+- Add option to trim T, C, and H axes of image histograms.
+- Add option to decode histograms to memory-mapped or user-provided arrays.
+- Add ``__getitem__`` interface to image histogram.
 
 2023.11.1
 
@@ -58,13 +70,15 @@ and deprecated image reconstruction.
 
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
-<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_
+<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
-Other Python implementations for reading PicoQuant files are
+Other Python modules for reading PicoQuant files are
 `Read_PTU.py
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
-`picoquantio <https://github.com/tsbischof/picoquantio>`_, and
+`PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
+`picoquantio <https://github.com/tsbischof/picoquantio>`_,
+`ptuparser <https://pypi.org/project/ptuparser/>`_, and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
@@ -86,7 +100,7 @@ UUID('86d428e2-cb0b-4964-996c-04456ba6be7b')
 {...'CreatorSW_Name': 'SymPhoTime 64', 'CreatorSW_Version': '2.1'...}
 >>> pq.close()
 
-Read metadata from PicoQuant PTU FLIM file:
+Read metadata from a PicoQuant PTU FLIM file:
 
 >>> ptu = PtuFile('tests/FLIM.ptu')
 >>> ptu.magic
@@ -98,39 +112,56 @@ Read metadata from PicoQuant PTU FLIM file:
 >>> ptu.measurement_submode
 <PtuMeasurementSubMode.IMAGE: 3>
 
-Decode TTTR records from file to numpy.recarray and get global times of frame
-changes from the masks:
+Decode TTTR records from the PTU file to numpy.recarray. Get global times of
+frame changes from markers:
 
 >>> decoded = ptu.decode_records()
 >>> decoded['time'][(decoded['marker'] & ptu.frame_change_mask) > 0]
 array([1571185680], dtype=uint64)
 
-Decode TTTR records to delay-time histogram per channel:
+Decode TTTR records to overall delay-time histograms per channel:
 
->>> ptu.decode_histogram(dtype='uint8', asxarray=False)
+>>> ptu.decode_histogram(dtype='uint8')
 array([[ 5,  7,  7, ..., 10,  9,  2]], dtype=uint8)
 
-Read FLIM histogram as xarray, decoding only the first channel and
-integrating all histogram bins:
+Get information about the FLIM image histogram in the PTU file:
 
 >>> ptu.shape
-(2, 1, 256, 256, 3126)
+(1, 256, 256, 2, 3126)
 >>> ptu.dims
-('C', 'T', 'Y', 'X', 'H')
+('T', 'Y', 'X', 'C', 'H')
 >>> ptu.coords
 {'T': ..., 'Y': ..., 'X': ..., 'H': ...}
->>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)  # doctest: +SKIP
-<xarray.DataArray (C: 1, T: 1, Y: 256, X: 256, H: 1)>
-array([[[[[...]]]]], dtype=uint16)
+>>> ptu.dtype
+dtype('uint16')
+
+Decode parts of the image histogram to numpy array using slice notation.
+Slice step sizes define binning, -1 being used to integrate along axis:
+
+>>> ptu[:, ..., 0, ::-1]
+array([[[103, ..., 38],
+              ...
+        [ 47, ..., 30]]], dtype=uint16)
+
+Alternatively, decode the first channel and integrate all histogram bins
+to a xarray.DataArray, keeping reduced axes:
+
+>>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
+<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
+array([[[[[103]],
+           ...
+         [[ 30]]]]], dtype=uint16)
 Coordinates:
-    * T        (T) float64 0.0
-    * Y        (Y) float64 -0.0001304 -0.0001294 ... 0.0001284 0.0001294
-    * X        (X) float64 -0.0001304 -0.0001294 ... 0.0001284 0.0001294
-    * H        (H) float64 0.0
+  * T        (T) float64 0.05625
+  * Y        (Y) float64 -0.0001304 ... 0.0001294
+  * X        (X) float64 -0.0001304 ... 0.0001294
+  * H        (H) float64 0.0
 Dimensions without coordinates: C
+Attributes...
+    frequency:      15258789.123471113
 ...
 >>> ptu.close()
 
-View the image and metadata in a PTU file from the console::
+Preview the image and metadata in a PTU file from the console::
 
     $ python -m ptufile tests/FLIM.ptu
