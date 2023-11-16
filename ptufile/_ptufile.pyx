@@ -558,7 +558,7 @@ def decode_t3_image(
                             break
                     if iframe >= startt and iy >= starty and iy < stopy:
                         iy_binned = (iy - starty) // biny
-                        time_line_start = time_global
+                        time_line_start = time_global if time_global > 0 else 1
                         if iframe_binned != (iframe - startt) // bint:
                             iframe_binned = (iframe - startt) // bint
                             times[iframe_binned] = time_line_start
