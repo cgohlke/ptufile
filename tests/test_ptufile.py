@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2023.11.13
+:Version: 2023.11.16
 
 """
 
@@ -612,6 +612,43 @@ def test_issue_marker_order():
         )
         assert im.shape == (512, 512)
         assert im[390, 277] == 6
+
+
+def test_issue_empty_line():
+    """Test line not empty when first record is start marker."""
+    fname = HERE / 'Example_image.sc.ptu'
+    with PtuFile(fname) as ptu:
+        str(ptu)
+        assert ptu.version == '00.0.1'
+        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PtuRecordType.PicoHarpT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+
+        assert ptu.shape == (1, 256, 256, 1, 133)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert ptu.coords['H'][1] == 9.696969697e-11  # 97 ps
+
+        assert ptu._info.skip_first_frame == 0
+        assert ptu._info.skip_last_frame == 0
+
+        assert ptu.frame_change_mask == 4
+        assert ptu.line_start_mask == 1
+        assert ptu.line_stop_mask == 2
+
+        assert ptu.acquisition_time == 0.27299666752114843
+        assert ptu.frame_time == 0.27299666752114843
+        assert ptu.frequency == 2517700.195304632
+        assert ptu.syncrate == 78020000
+        assert ptu.number_markers == 513
+        assert ptu.number_photons == 722402
+        assert ptu.number_records == 723240
+        assert ptu.global_pixel_time == 324
+        assert ptu.pixel_time == 4.1527813381184314e-06
+
+        assert ptu.decode_records()['marker'][0] == 1  # start marker
+        assert ptu[0, 0, 100, 0, ::-1] == 40  # first line not empty
 
 
 def test_issue_record_number(caplog):
