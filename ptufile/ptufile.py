@@ -41,7 +41,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.13
+:Version: 2023.11.16
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -71,6 +71,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2023.11.16
+
+- Fix empty line when first record is start marker.
 
 2023.11.13
 
@@ -200,7 +204,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2023.11.13'
+__version__ = '2023.11.16'
 
 __all__ = [
     'imread',
@@ -1784,6 +1788,7 @@ class PtuFile(PqFile):
         samples: int | None = None,
         verbose: bool = False,
         show: bool = True,
+        **kwargs,
     ) -> None:
         """Plot histograms using matplotlib.
 
@@ -1796,6 +1801,8 @@ class PtuFile(PqFile):
             show:
                 If true (default), display all figures.
                 Else, defer to user or environment to display figures.
+            **kwargs:
+                Additional arguments passed to ``tifffile.imshow``.
 
         """
         from matplotlib import pyplot
@@ -1818,6 +1825,7 @@ class PtuFile(PqFile):
                     numpy.moveaxis(histogram.values, -2, 0).squeeze(),
                     title=repr(self),
                     photometric='minisblack',
+                    **kwargs,
                 )
                 pyplot.figure()
             t.start()
