@@ -11,7 +11,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.13
+:Version: 2023.11.16
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -41,6 +41,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2023.11.16
+
+- Fix empty line when first record is start marker.
 
 2023.11.13
 
