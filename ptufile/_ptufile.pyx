@@ -6,7 +6,7 @@
 # cython: cdivision = True
 # cython: nonecheck = False
 
-# Copyright (c) 2023, Christoph Gohlke
+# Copyright (c) 2023-2024, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -85,12 +85,12 @@ cdef int init_format(
     ssize_t* channels,  # number_channels_max
 ):
     if format == 0x00010303:
-        # PicoHarpT3
+        # PicoHarpT3/PicoHarp300
         decode[0] = decode_pt3
         bins[0] = 4096
         channels[0] = 4
     elif format == 0x00010203:
-        # PicoHarpT2
+        # PicoHarpT2/PicoHarp300
         decode[0] = decode_pt2
         bins[0] = 0
         channels[0] = 5  # ?
@@ -98,7 +98,7 @@ cdef int init_format(
         0x01010204,  # HydraHarp2T2
         0x00010205,  # TimeHarp260NT2
         0x00010206,  # TimeHarp260PT2
-        0x00010207,  # MultiHarpT2
+        0x00010207,  # GenericT2 (MultiHarpT2 and Picoharp330T2)
     }:
         decode[0] = decode_ht2
         bins[0] = 0
@@ -112,7 +112,7 @@ cdef int init_format(
         0x01010304,  # HydraHarp2T3
         0x00010305,  # TimeHarp260NT3
         0x00010306,  # TimeHarp260PT3
-        0x00010307,  # MultiHarpT3
+        0x00010307,  # GenericT3 (MultiHarpT3 and Picoharp330T3)
     }:
         decode[0] = decode_ht3
         bins[0] = 32768
@@ -274,6 +274,9 @@ def decode_t3_point(
         ssize_t i, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
 
+    if pixel_time == 0:
+        raise ValueError(f'invalid {pixel_time=}')
+
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
     if maxbins_ == 0:
@@ -364,6 +367,9 @@ def decode_t3_line(
         uint8_t ispecial, imarker
         ssize_t i, ix, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
+
+    if pixel_time == 0:
+        raise ValueError(f'invalid {pixel_time=}')
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
@@ -472,6 +478,9 @@ def decode_t3_image(
         uint8_t ispecial, imarker
         ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
+
+    if pixel_time == 0:
+        raise ValueError(f'invalid {pixel_time=}')
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
@@ -618,6 +627,9 @@ def decode_t2_histogram(
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
         decode_func_t decode_func
+
+    if bin_time == 0:
+        raise ValueError(f'invalid {bin_time=}')
 
     if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
