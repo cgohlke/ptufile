@@ -1,6 +1,6 @@
 # ptufile.py
 
-# Copyright (c) 2023, Christoph Gohlke
+# Copyright (c) 2023-2024, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.16
+:Version: 2024.2.2
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -63,14 +63,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.6, 3.12.0 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.26.1
-- `Xarray <https://pypi.org/project/xarray>`_ 2023.10.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.1 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2023.9.26 (optional)
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.7, 3.12.1 (64-bit)
+- `Numpy <https://pypi.org/project/numpy>`_ 1.26.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.2 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.1.30 (optional)
 
 Revisions
 ---------
+
+2024.2.2
+
+- Change positive dtime parameter from index to size (breaking).
+- Fix segfault with ImgHdr_TimePerPixel = 0.
+- Rename MultiHarp to Generic conforming with changes in PicoQuant reference.
 
 2023.11.16
 
@@ -111,9 +117,14 @@ Other Python modules for reading PicoQuant files are
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
 `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
+`tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_,
 `picoquantio <https://github.com/tsbischof/picoquantio>`_,
-`ptuparser <https://pypi.org/project/ptuparser/>`_, and
-`napari-flim-phasor-plotter
+`ptuparser <https://pypi.org/project/trattoria/>`_,
+`trattoria <https://pypi.org/project/ptuparser/>`_
+(wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_
+and `tttr-toolbox
+<https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_),
+and `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
 The development of this library was supported by the
@@ -169,7 +180,7 @@ Get information about the FLIM image histogram in the PTU file:
 >>> ptu.dtype
 dtype('uint16')
 
-Decode parts of the image histogram to numpy array using slice notation.
+Decode parts of the image histogram to ``numpy.ndarray`` using slice notation.
 Slice step sizes define binning, -1 being used to integrate along axis:
 
 >>> ptu[:, ..., 0, ::-1]
@@ -178,7 +189,7 @@ array([[[103, ..., 38],
         [ 47, ..., 30]]], dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
-to a xarray.DataArray, keeping reduced axes:
+to a ``xarray.DataArray``, keeping reduced axes:
 
 >>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
 <xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
@@ -198,13 +209,13 @@ Attributes...
 
 Preview the image and metadata in a PTU file from the console::
 
-    $ python -m ptufile tests/FLIM.ptu
+    python -m ptufile tests/FLIM.ptu
 
 """
 
 from __future__ import annotations
 
-__version__ = '2023.11.16'
+__version__ = '2024.2.2'
 
 __all__ = [
     'imread',
@@ -242,7 +253,7 @@ if TYPE_CHECKING:
     from numpy.typing import DTypeLike, NDArray
     from xarray import DataArray
 
-    Dimension = Literal['T'] | Literal['C'] | Literal['H']
+    Dimension = Literal['T', 'C', 'H']
     OutputType = str | BinaryIO | NDArray[Any] | None
 
 
@@ -350,6 +361,9 @@ class PhuMeasurementSubMode(enum.IntEnum):
     TRES = 2
     """Time-Resolved Emission Spectra mode."""
 
+    SEQ = 3
+    """Sequence mode."""
+
     @classmethod
     def _missing_(cls, value: object) -> object:
         if not isinstance(value, int):
@@ -442,8 +456,8 @@ class PqTagType(enum.IntEnum):
 class PtuRecordType(enum.IntEnum):
     """TTTR record format."""
 
-    PicoHarpT3 = 0x00010303
-    PicoHarpT2 = 0x00010203
+    PicoHarpT3 = 0x00010303  # Picoharp300T3
+    PicoHarpT2 = 0x00010203  # Picoharp300T2
     HydraHarpT3 = 0x00010304
     HydraHarpT2 = 0x00010204
     HydraHarp2T3 = 0x01010304
@@ -452,8 +466,8 @@ class PtuRecordType(enum.IntEnum):
     TimeHarp260NT2 = 0x00010205
     TimeHarp260PT3 = 0x00010306
     TimeHarp260PT2 = 0x00010206
-    MultiHarpT2 = 0x00010207
-    MultiHarpT3 = 0x00010307
+    GenericT2 = 0x00010207  # MultiHarpT2 and Picoharp330T2
+    GenericT3 = 0x00010307  # MultiHarpT3 and Picoharp330T3
 
 
 T2_RECORD_DTYPE = numpy.dtype(
@@ -901,7 +915,7 @@ class PtuFile(PqFile):
         file:
             File name or seekable binary stream.
         trimdims:
-            Axes to trim. The default is ``'TCH```:
+            Axes to trim. The default is ``'TCH'``:
 
             - ``'T'``: remove incomplete first or last frame.
             - ``'C'``: remove trailing channels not containing photons.
@@ -1052,7 +1066,7 @@ class PtuFile(PqFile):
 
         Multiply with global resolution to get time in s.
         """
-        if 'ImgHdr_TimePerPixel' in self.tags:
+        if self.tags.get('ImgHdr_TimePerPixel', 0.0) > 0.0:
             pixeltime = (
                 float(self.tags['ImgHdr_TimePerPixel'])
                 / float(self.tags['MeasDesc_GlobalResolution'])
@@ -1176,7 +1190,7 @@ class PtuFile(PqFile):
 
     @property
     def syncrate(self) -> int:
-        """Counts per s as recorded at beginning of measurement."""
+        """Sync events per s as recorded at beginning of measurement."""
         return int(self.tags['TTResult_SyncRate'])
 
     @property
@@ -1204,7 +1218,7 @@ class PtuFile(PqFile):
 
     @property
     def use_xarray(self) -> bool:
-        """Return histograms as xarray.DataArray."""
+        """Return histograms as ``xarray.DataArray``."""
         return self._asxarray
 
     @use_xarray.setter
@@ -1284,7 +1298,7 @@ class PtuFile(PqFile):
         """Coordinate arrays labelling each point in image histogram array.
 
         Coordinates for the time axis are approximate. Exact coordinates are
-        returned with :py:meth:`PtuFile.decode_image` xarray.Dataset arrays.
+        returned with :py:meth:`PtuFile.decode_image` as ``xarray.DataArray``.
 
         """
         if not self.shape:
@@ -1552,8 +1566,8 @@ class PtuFile(PqFile):
                 If < 0, integrate channel axis, else return specified channel.
                 Overrides ``selection`` for axis ``C``.
             dtime:
-                If < 0, integrate delay time axis, else return specified bin.
-                Overrides ``selection`` for axis ``H``.
+                If < 0, integrate delay time axis, else return up to specified
+                bin. Overrides ``selection`` for axis ``H``.
             keepdims:
                 If true (default), reduced axes are left as size-one dimension.
             asxarray:
@@ -1644,9 +1658,15 @@ class PtuFile(PqFile):
                 raise IndexError(f'{channel=} out of range')
             selection[-2] = channel if channel >= 0 else slice(None, None, -1)
         if dtime is not None:
-            if dtime >= shape[-1]:
-                raise IndexError(f'{dtime=} out of range')
-            selection[-1] = dtime if dtime >= 0 else slice(None, None, -1)
+            if dtime >= 0:
+                if dtime > self.number_bins_max:
+                    raise IndexError(
+                        f'{dtime=} out of range {self.number_bins_max}'
+                    )
+                selection[-1] = slice(0, dtime, 1)
+                shape[-1] = dtime
+            else:
+                selection[-1] = slice(None, None, -1)
 
         start = [0] * ndim
         step = [1] * ndim
