@@ -11,7 +11,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2023.11.16
+:Version: 2024.2.2
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,14 +33,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.6, 3.12.0 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.26.1
-- `Xarray <https://pypi.org/project/xarray>`_ 2023.10.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.1 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2023.9.26 (optional)
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.7, 3.12.1 (64-bit)
+- `Numpy <https://pypi.org/project/numpy>`_ 1.26.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.2 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.1.30 (optional)
 
 Revisions
 ---------
+
+2024.2.2
+
+- Change positive dtime parameter from index to size (breaking).
+- Fix segfault with ImgHdr_TimePerPixel = 0.
+- Rename MultiHarp to Generic conforming with changes in PicoQuant reference.
 
 2023.11.16
 
@@ -81,9 +87,14 @@ Other Python modules for reading PicoQuant files are
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
 `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
+`tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_,
 `picoquantio <https://github.com/tsbischof/picoquantio>`_,
-`ptuparser <https://pypi.org/project/ptuparser/>`_, and
-`napari-flim-phasor-plotter
+`ptuparser <https://pypi.org/project/trattoria/>`_,
+`trattoria <https://pypi.org/project/ptuparser/>`_
+(wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_
+and `tttr-toolbox
+<https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_),
+and `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
 The development of this library was supported by the
@@ -139,7 +150,7 @@ Get information about the FLIM image histogram in the PTU file:
 >>> ptu.dtype
 dtype('uint16')
 
-Decode parts of the image histogram to numpy array using slice notation.
+Decode parts of the image histogram to ``numpy.ndarray`` using slice notation.
 Slice step sizes define binning, -1 being used to integrate along axis:
 
 >>> ptu[:, ..., 0, ::-1]
@@ -148,7 +159,7 @@ array([[[103, ..., 38],
         [ 47, ..., 30]]], dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
-to a xarray.DataArray, keeping reduced axes:
+to a ``xarray.DataArray``, keeping reduced axes:
 
 >>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
 <xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
@@ -168,4 +179,4 @@ Attributes...
 
 Preview the image and metadata in a PTU file from the console::
 
-    $ python -m ptufile tests/FLIM.ptu
+    python -m ptufile tests/FLIM.ptu
