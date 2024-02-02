@@ -2,11 +2,14 @@
 
 """Ptufile package Setuptools script."""
 
+import os
 import re
 import sys
 
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext as _build_ext
+
+DEBUG = bool(os.environ.get('PTUFILE_DEBUG', False))
 
 
 def search(pattern, code, flags=0):
@@ -75,6 +78,8 @@ ext_modules = [
             # ('Py_LIMITED_API', '1'),
             ('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION'),
         ],
+        extra_compile_args=['/Zi', '/Od'] if DEBUG else [],
+        extra_link_args=['-debug:full'] if DEBUG else [],
     )
 ]
 
