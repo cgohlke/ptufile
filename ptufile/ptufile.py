@@ -41,7 +41,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.2
+:Version: 2024.2.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -63,7 +63,7 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.7, 3.12.1 (64-bit)
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
 - `Numpy <https://pypi.org/project/numpy>`_ 1.26.3
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.2 (optional)
@@ -71,6 +71,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2024.2.8
+
+- Support sinusoidal scanning correction.
 
 2024.2.2
 
@@ -105,8 +109,8 @@ The API is not stable yet and might change between revisions.
 This library has been tested with a limited number of files only.
 
 The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, bidirectional scanning, sinusoidal correction,
-and deprecated image reconstruction.
+decoding images from T2 formats, bidirectional scanning, and deprecated
+image reconstruction.
 
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
@@ -215,7 +219,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.2.2'
+__version__ = '2024.2.8'
 
 __all__ = [
     'imread',
@@ -237,6 +241,7 @@ __all__ = [
 import dataclasses
 import enum
 import logging
+import math
 import os
 import struct
 import sys
@@ -1595,26 +1600,22 @@ class PtuFile(PqFile):
 
         Raises:
             NotImplementedError:
-                T2 images, bidirectional scanning, sinusoidal correction, and
-                deprecated image reconstruction are not supported.
+                T2 images, bidirectional scanning, and deprecated image
+                reconstruction are not supported.
             IndexError:
                 Selection is out of bounds.
 
         """
-        # TODO: T2 images
-        # TODO: sinusoidal correction
-        # TODO: deprecated image reconstruction using
-        #   ImgHdr_PixResol, ImgHdr_TStartTo, ImgHdr_TStopTo,
-        #   ImgHdr_TStartFro, ImgHdr_TStopFro
-
         if not self.is_t3:
+            # TODO: T2 images
             raise NotImplementedError('not a T3 image')
-
-        if self.tags.get('ImgHdr_SinCorrection', 0) > 0:
-            raise NotImplementedError('sinusoidal correction')
         if self.tags.get('ImgHdr_BiDirect', 0) > 0:
+            # TODO: bidirectional scanning
             raise NotImplementedError('bidirectional scanning')
         if self.is_image and 'ImgHdr_LineStart' not in self.tags:
+            # TODO: deprecated image reconstruction using
+            #   ImgHdr_PixResol, ImgHdr_TStartTo, ImgHdr_TStopTo,
+            #   ImgHdr_TStartFro, ImgHdr_TStopFro
             raise NotImplementedError('old-style image reconstruction')
 
         shape = list(self.shape)
@@ -1714,6 +1715,18 @@ class PtuFile(PqFile):
                     f'axis {i} index type {type(index)!r} invalid'
                 )
 
+        if self.tags.get('ImgHdr_SinCorrection', 0) > 0:
+            pixel_time = 0
+            pixel_at_time = sinusoidal_correction(
+                self.tags['ImgHdr_SinCorrection'],
+                self.global_line_time,
+                self.pixels_in_line,
+                dtype=numpy.uint16,  # should be enough for pixels_in_line
+            )
+        else:
+            pixel_time = self.global_pixel_time
+            pixel_at_time = numpy.empty(0, dtype=numpy.uint16)
+
         if dtype is None:
             dtype = self._dtype
         else:
@@ -1735,7 +1748,8 @@ class PtuFile(PqFile):
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
-                self.global_pixel_time,
+                pixel_time,
+                pixel_at_time,
                 self.line_start_mask,
                 self.line_stop_mask,
                 self.frame_change_mask,
@@ -1806,6 +1820,9 @@ class PtuFile(PqFile):
         self,
         *,
         samples: int | None = None,
+        frame: int | None = None,
+        channel: int | None = None,
+        dtime: int | None = -1,
         verbose: bool = False,
         show: bool = True,
         **kwargs,
@@ -1816,6 +1833,15 @@ class PtuFile(PqFile):
             samples:
                 Number of bins along measurement for T2 mode.
                 The default is 1000.
+            frame:
+                If < 0, integrate time axis, else show specified frame.
+                By default all frames are shown. Applies to T3 images.
+            channel:
+                If < 0, integrate channel axis, else show specified channel.
+                By default all channels are shown. Applies to T3 images.
+            dtime:
+                If < 0 (default), integrate delay time axis, else show up to
+                specified bin. If None, show all bins. Applies to T3 images.
             verbose:
                 Print information about histogram arrays.
             show:
@@ -1835,7 +1861,9 @@ class PtuFile(PqFile):
                 and not self.is_bidirectional
             ):
                 t.start()
-                histogram: Any = self.decode_image(dtime=-1, asxarray=True)
+                histogram: Any = self.decode_image(
+                    frame=frame, channel=channel, dtime=dtime, asxarray=True
+                )
                 if verbose:
                     print()
                     t.print('decode_image')
@@ -1928,6 +1956,44 @@ class PtuInfo:
             *(f'{key}={value},' for key, value in self.__dict__.items()),
             end='\n)',
         )
+
+
+def sinusoidal_correction(
+    sincorrect: float,
+    global_line_time: int,
+    pixels_in_line: int,
+    dtype: DTypeLike = None,
+) -> NDArray[Any]:
+    """Return pixel indices of global times in line for sinusoidal scanning.
+
+    Parameters:
+        sincorrect:
+            Percentage of amplitude of sine wave used for measurement.
+            The value of the `ImgHdr_SinCorrection` tag.
+        global_line_time:
+            Global time per line.
+        pixels_in_line:
+            Number of pixels in line.
+
+    Returns:
+        Array of size `global_line_time`, mapping global time in line to
+        pixel index in line.
+
+    """
+    # TODO: Leica uses fraction of overal period of sinus wave?
+    dtype = numpy.dtype(numpy.uint16 if dtype is None else dtype)
+    if sincorrect <= 0.0 or sincorrect > 100.0:
+        raise ValueError(f'{sincorrect=} out of range')
+    if global_line_time < 2:
+        raise ValueError(f'{global_line_time=} out of range')
+    if pixels_in_line < 2 or pixels_in_line >= numpy.iinfo(dtype).max:
+        raise ValueError(f'{pixels_in_line=} out of range')
+    limit = math.asin(-sincorrect / 100.0)
+    a = numpy.linspace(limit, -limit, global_line_time, endpoint=False)
+    a = numpy.sin(a)
+    a *= -0.5 * pixels_in_line / a[0]
+    a -= a[0]
+    return a.astype(dtype)
 
 
 def create_output(
