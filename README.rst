@@ -11,7 +11,7 @@ photonic components and instruments.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.2
+:Version: 2024.2.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,7 +33,7 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.7, 3.12.1 (64-bit)
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
 - `Numpy <https://pypi.org/project/numpy>`_ 1.26.3
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.2 (optional)
@@ -41,6 +41,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2024.2.8
+
+- Support sinusoidal scanning correction.
 
 2024.2.2
 
@@ -75,8 +79,8 @@ The API is not stable yet and might change between revisions.
 This library has been tested with a limited number of files only.
 
 The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, bidirectional scanning, sinusoidal correction,
-and deprecated image reconstruction.
+decoding images from T2 formats, bidirectional scanning, and deprecated
+image reconstruction.
 
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
