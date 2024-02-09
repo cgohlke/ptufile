@@ -2,7 +2,7 @@
 # distutils: language = c
 # cython: language_level = 3
 # cython: boundscheck = False
-# cython: wraparound = True
+# cython: wraparound = False
 # cython: cdivision = True
 # cython: nonecheck = False
 
@@ -452,10 +452,11 @@ def decode_t3_image(
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
-    const uint64_t pixel_time,
-    const uint32_t line_start,
-    const uint32_t line_stop,
-    const uint32_t frame_change,
+    const uint64_t pixel_time,  # average global time spent in pixel
+    const uint16_t[::1] pixel_at_time,  # global time in line to pixel index
+    const uint32_t line_start,  # mask
+    const uint32_t line_stop,  # mask
+    const uint32_t frame_change,  # mask
     const ssize_t startt = 0,
     const ssize_t starty = 0,
     const ssize_t startx = 0,
@@ -473,13 +474,14 @@ def decode_t3_image(
         ssize_t sizec, sizet, sizey, sizex, sizeh
         ssize_t stopc, stopt, stopy, stopx, stoph
         ssize_t nrecords = records.size
+        ssize_t global_line_time = pixel_at_time.size
         uint64_t overflow, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
         ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_
         decode_func_t decode_func
 
-    if pixel_time == 0:
+    if pixel_time == 0 and global_line_time == 0:
         raise ValueError(f'invalid {pixel_time=}')
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
@@ -538,7 +540,15 @@ def decode_t3_image(
                 ):
                     continue
 
-                ix = (time_global - time_line_start) // pixel_time
+                if pixel_time > 0:
+                    ix = (time_global - time_line_start) // pixel_time
+                else:
+                    ix = time_global - time_line_start
+                    if ix < global_line_time:
+                        ix = <ssize_t> pixel_at_time[ix]
+                    else:
+                        ix = stopx
+
                 if ix >= startx and ix < stopx:
                     histogram[
                         iframe_binned,
