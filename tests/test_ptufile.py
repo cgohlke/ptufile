@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.2.2
+:Version: 2024.2.8
 
 """
 
@@ -358,9 +358,13 @@ def test_ptu_t3_sinusoidal():
         assert ptu.syncrate == 38898320
         assert ptu.tcspc_resolution == 7.999999968033578e-12
 
-        assert len(ptu.read_records()) == ptu.number_records
-        with pytest.raises(NotImplementedError):
-            ptu.decode_image()
+        records = ptu.read_records()
+        assert len(records) == ptu.number_records
+        im = ptu.decode_image(
+            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
+        )
+        assert im.shape == (512, 512)
+        assert im[399, 18] == 37
 
 
 @pytest.mark.skip('no test file available')
