@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.2.8
+:Version: 2024.2.15
 
 """
 
@@ -42,6 +42,7 @@ import sys
 
 import numpy
 import ptufile
+import ptufile.numcodecs
 import pytest
 import xarray
 from numpy.testing import assert_array_equal
@@ -56,6 +57,7 @@ from ptufile import (
     PtuMeasurementMode,
     PtuMeasurementSubMode,
     PtuRecordType,
+    PtuScannerType,
     imread,
 )
 
@@ -165,6 +167,7 @@ def test_ptu(filetype):
             assert ptu.type == PtuRecordType.PicoHarpT3
             assert ptu.measurement_mode == PtuMeasurementMode.T3
             assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+            assert ptu.scanner == PtuScannerType.LSM
             assert ptu.filename == (
                 os.fspath(fname) if filetype == str else ''
             )
@@ -225,6 +228,7 @@ def test_ptu_t3_image():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
 
         assert ptu.is_image
         assert ptu.is_t3
@@ -315,6 +319,7 @@ def test_ptu_t3_sinusoidal():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
 
         assert ptu.is_image
         assert ptu.is_t3
@@ -383,6 +388,7 @@ def test_ptu_t3_point():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.POINT
+        assert ptu.scanner == PtuScannerType.PI_E710
 
         assert not ptu.is_image
         assert ptu.is_t3
@@ -581,6 +587,7 @@ def test_issue_skip_frame():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
 
         assert ptu.shape == (100, 512, 512, 2, 4096)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -637,6 +644,7 @@ def test_issue_marker_order():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
 
         assert ptu.shape == (191, 512, 512, 3, 3126)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -702,6 +710,7 @@ def test_issue_empty_line():
         assert ptu.type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
 
         assert ptu.shape == (1, 256, 256, 1, 133)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -738,6 +747,7 @@ def test_issue_pixeltime_zero():
         assert ptu.type == PtuRecordType.GenericT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner is None
 
         assert ptu.tags['ImgHdr_TimePerPixel'] == 0  # nasty
         assert ptu.global_pixel_time == 160
@@ -854,7 +864,7 @@ def test_glob(path):
             str(ptu)
 
 
-def test_ptu_filesequence():
+def test_ptu_zip_sequence():
     """Test read Z-stack with imread and tifffile.FileSequence."""
     # requires ~28GB. Do not trim H dimensions such that files match
     from tifffile import FileSequence
@@ -865,6 +875,82 @@ def test_ptu_filesequence():
         stack = ptus.asarray(channel=0, trimdims='TC', ioworkers=1)
     assert stack.shape == (11, 5, 256, 256, 1, 4096)  # 11 files, 5 frames each
     assert stack.dtype == 'uint16'
+
+
+def test_ptu_leica_sequence():
+    """Test read Leica TZ-stack with imread and tifffile.imread."""
+    # 410 files. Requires ~16GB.
+    import tifffile  # >= 2024.2.12
+
+    fname = HERE / 'Flipper TR time series.sptw/*.ptu'
+    stack = tifffile.imread(
+        str(fname),  # glob pattern needs to be str
+        pattern=r'_(t)(\d+)_(z)(\d+)',
+        imread=imread,
+        chunkshape=(512, 512, 160),  # shape returned by imread
+        chunkdtype='uint8',  # dtype returned by imread
+        ioworkers=None,  # use multi-threading
+        imreadargs=dict(
+            frame=0,
+            channel=0,
+            dtime=160,  # fix number of bins to 160
+            dtype='uint8',  # request uint8 output
+            keepdims=False,
+        ),
+    )
+    assert stack.shape == (41, 10, 512, 512, 160)
+    assert stack.dtype == 'uint8'
+    assert stack[24, 4, 228, 279, 16] == 3
+
+
+def test_ptu_numcodecs():
+    """Test Leica TZ-stack with tifffile.ZarrFileSequenceStore and fsspec."""
+    # 410 files. Requires ~16GB.
+    import fsspec
+    import tifffile  # > 2024.2.12
+    import zarr
+
+    pathname = HERE / 'Flipper TR time series.sptw'
+    url = str(pathname).replace('\\', '/')
+    jsonfile = str(pathname / 'FLIPPER.json')
+    fname = str(pathname / '*.ptu')  # glob pattern needs to be str
+
+    store = tifffile.imread(
+        fname,
+        pattern=r'_(t)(\d+)_(z)(\d+)',
+        imread=imread,
+        chunkshape=(512, 512),  # shape returned by imread
+        chunkdtype='uint8',  # dtype returned by imread
+        imreadargs=dict(
+            frame=0,
+            channel=0,
+            dtime=-1,
+            dtype='uint8',  # request uint8 output
+            keepdims=False,
+        ),
+        aszarr=True,
+    )
+    assert isinstance(store, tifffile.ZarrFileSequenceStore)
+    store.write_fsspec(
+        jsonfile,
+        url=url,
+        version=1,
+        codec_id='ptufile',
+        quote=False,
+    )
+    store.close()
+    mapper = fsspec.get_mapper(
+        'reference://',
+        fo=jsonfile,
+        target_protocol='file',
+        remote_protocol='file',
+    )
+
+    ptufile.numcodecs.register_codec()
+    stack = zarr.open(mapper, mode='r')
+    assert stack.shape == (41, 10, 512, 512)
+    assert stack.dtype == 'uint8'
+    assert stack[24, 4, 228, 279] == 18
 
 
 if __name__ == '__main__':
