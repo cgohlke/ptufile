@@ -29,19 +29,16 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Read PicoQuant(r) PTU and related files.
+"""Read PicoQuant PTU and related files.
 
 Ptufile is a Python library to read image and metadata from PicoQuant PTU
 and related files: PHU, PCK, PCO, PFS, PUS, and PQRES.
 PTU files contain time correlated single photon counting (TCSPC)
 measurement data and instrumentation parameters.
 
-`PicoQuant GmbH <https://www.picoquant.com/>`_ is a manufacturer of
-photonic components and instruments.
-
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.8
+:Version: 2024.2.15
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,13 +61,19 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.26.3
+- `Numpy <https://pypi.org/project/numpy>`_ 1.26.4
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.1.30 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.3 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.2.12 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
 
 Revisions
 ---------
+
+2024.2.15
+
+- Add PtuFile.scanner property.
+- Add numcodecs compatible PTU codec.
 
 2024.2.8
 
@@ -104,36 +107,36 @@ Revisions
 Notes
 -----
 
-The API is not stable yet and might change between revisions.
+The `Chan Zuckerberg Initiative
+<https://chanzuckerberg.com/eoss/proposals/phasorpy-a-python-library-for-phasor-analysis-of-flim-and-spectral-imaging>`_
+financially supported the development of this library.
 
-This library has been tested with a limited number of files only.
-
-The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, bidirectional scanning, and deprecated
-image reconstruction.
+`PicoQuant GmbH <https://www.picoquant.com/>`_ is a manufacturer of photonic
+components and instruments.
 
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
-Other Python modules for reading PicoQuant files are
-`Read_PTU.py
-<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
-`readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
-`PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
-`tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_,
-`picoquantio <https://github.com/tsbischof/picoquantio>`_,
-`ptuparser <https://pypi.org/project/trattoria/>`_,
-`trattoria <https://pypi.org/project/ptuparser/>`_
-(wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_
-and `tttr-toolbox
-<https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_),
-and `napari-flim-phasor-plotter
-<https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
+The following features are currently not implemented: PT2 and PT3 files,
+decoding images from T2 formats, bidirectional scanning, and deprecated
+image reconstruction.
 
-The development of this library was supported by the
-`Chan Zuckerberg Initiative
-<https://chanzuckerberg.com/eoss/proposals/phasorpy-a-python-library-for-phasor-analysis-of-flim-and-spectral-imaging>`_.
+Other Python modules for reading PicoQuant files are:
+
+- `Read_PTU.py
+  <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_
+- `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_
+- `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_
+- `tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_
+- `picoquantio <https://github.com/tsbischof/picoquantio>`_
+- `ptuparser <https://pypi.org/project/trattoria/>`_
+- `phconvert <https://github.com/Photon-HDF5/phconvert/>`_
+- `trattoria <https://pypi.org/project/ptuparser/>`_
+  (wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_ and
+  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_)
+- `napari-flim-phasor-plotter
+  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
 
 Examples
 --------
@@ -161,10 +164,12 @@ Read metadata from a PicoQuant PTU FLIM file:
 >>> ptu.measurement_submode
 <PtuMeasurementSubMode.IMAGE: 3>
 
-Decode TTTR records from the PTU file to numpy.recarray. Get global times of
-frame changes from markers:
+Decode TTTR records from the PTU file to ``numpy.recarray``.
 
 >>> decoded = ptu.decode_records()
+
+Get global times of frame changes from markers:
+
 >>> decoded['time'][(decoded['marker'] & ptu.frame_change_mask) > 0]
 array([1571185680], dtype=uint64)
 
@@ -219,7 +224,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.2.8'
+__version__ = '2024.2.15'
 
 __all__ = [
     'imread',
@@ -230,6 +235,8 @@ __all__ = [
     'PhuFile',
     'PtuFile',
     'PtuRecordType',
+    'PtuScannerType',
+    'PtuScanDirection',
     'PtuMeasurementMode',
     'PtuMeasurementSubMode',
     'PhuMeasurementMode',
@@ -422,6 +429,45 @@ class PtuMeasurementSubMode(enum.IntEnum):
             obj = cls(1)  # Point
         else:
             obj = cls(-1)
+        obj._value_ = value
+        return obj
+
+
+class PtuScannerType(enum.IntEnum):
+    """Scanner hardware."""
+
+    UNKNOWN = -1
+    """Unknown scanner."""
+
+    PI_E710 = 1
+    """PI E-710 scanner."""
+
+    LSM = 3
+    """PicoQuant LSM scanner."""
+
+    PI_LINEWBS = 5
+    """PI Line WB scanner."""
+
+    PI_E725 = 6
+    """PI E-725 scanner."""
+
+    PI_E727 = 7
+    """PI E-727 scanner."""
+
+    MCL = 8
+    """MCL scanner."""
+
+    FLIMBEE = 9
+    """PicoQuant FLIMBee scanner."""
+
+    SCANBOX = 10
+    """Zeiss ScanBox scanner."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)  # Unknown
         obj._value_ = value
         return obj
 
@@ -745,7 +791,11 @@ class PqFile:
     def __str__(self) -> str:
         return indent(
             repr(self),
-            *(f'{name}: {getattr(self, name)!r}'[:160] for name in self._STR_),
+            *(
+                f'{name}: {getattr(self, name)!r}'[:160]
+                for name in self._STR_
+                if getattr(self, name) is not None
+            ),
             *(
                 f'{name}: {getattr(self, name)!r}'[:160]
                 for name in dir(self)
@@ -944,6 +994,7 @@ class PtuFile(PqFile):
         'type',
         'measurement_mode',
         'measurement_submode',
+        'scanner',
         'shape',
         'dims',
         'coords',
@@ -989,6 +1040,13 @@ class PtuFile(PqFile):
     def measurement_submode(self) -> PtuMeasurementSubMode:
         """Sub-kind of measurement: Point, line, or image scan."""
         return PtuMeasurementSubMode(self.tags['Measurement_SubMode'])
+
+    @property
+    def scanner(self) -> PtuScannerType | None:
+        """Scanner hardware, or None if not specified."""
+        if 'ImgHdr_Ident' in self.tags:
+            return PtuScannerType(self.tags['ImgHdr_Ident'])
+        return None
 
     @property
     def global_resolution(self) -> float:
