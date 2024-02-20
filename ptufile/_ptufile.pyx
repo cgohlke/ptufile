@@ -467,6 +467,7 @@ def decode_t3_image(
     const ssize_t binx = 1,
     const ssize_t binc = 1,
     const ssize_t binh = 1,
+    # const bint wraparound = 0,
     const bint skip_first_frame = 0
 ):
     """Return TCSPC histogram from TTTR T3 records of image measurement."""
@@ -499,6 +500,8 @@ def decode_t3_image(
         )
     if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
+    # if wraparound and starth > 0:
+    #     raise ValueError(f'can not wrap dtime with {starth=}')
 
     sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
 
@@ -537,6 +540,7 @@ def decode_t3_image(
                     or ichannel >= stopc
                     or idtime < starth
                     or idtime >= stoph
+                    # or (not wraparound and idtime >= stoph)
                 ):
                     continue
 
@@ -550,6 +554,9 @@ def decode_t3_image(
                         ix = stopx
 
                 if ix >= startx and ix < stopx:
+                    # idtime_binned = (idtime - starth) // binh
+                    # if wraparound and idtime_binned >= sizeh:
+                    #     idtime_binned %= sizeh
                     histogram[
                         iframe_binned,
                         iy_binned,
@@ -621,6 +628,8 @@ def decode_t3_histogram(
             )
             if ispecial == 0 and ichannel < nchannels and idtime < nbins:
                 histogram[ichannel, idtime] += 1
+                # if wraparound:
+                #     histogram[ichannel, idtime % nbins] += 1
 
 
 def decode_t2_histogram(
