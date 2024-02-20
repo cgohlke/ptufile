@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.15
+:Version: 2024.2.20
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -62,13 +62,19 @@ This revision was tested with the following requirements and dependencies
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
 - `Numpy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.2.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.3 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.2.12 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
 
 Revisions
 ---------
+
+2024.2.20
+
+- Change definition of PtuFile.frequency (breaking).
+- Add option to specify number of bins returned by decode_histogram.
+- Add option to return histograms of one period.
 
 2024.2.15
 
@@ -201,18 +207,18 @@ Alternatively, decode the first channel and integrate all histogram bins
 to a ``xarray.DataArray``, keeping reduced axes:
 
 >>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
-<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
+<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)> ...
 array([[[[[103]],
            ...
          [[ 30]]]]], dtype=uint16)
 Coordinates:
-  * T        (T) float64 0.05625
-  * Y        (Y) float64 -0.0001304 ... 0.0001294
-  * X        (X) float64 -0.0001304 ... 0.0001294
-  * H        (H) float64 0.0
+  * T        (T) float64... 0.05625
+  * Y        (Y) float64... -0.0001304 ... 0.0001294
+  * X        (X) float64... -0.0001304 ... 0.0001294
+  * H        (H) float64... 0.0
 Dimensions without coordinates: C
 Attributes...
-    frequency:      15258789.123471113
+    frequency:      19999200.0
 ...
 >>> ptu.close()
 
@@ -224,7 +230,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.2.15'
+__version__ = '2024.2.20'
 
 __all__ = [
     'imread',
@@ -1102,8 +1108,18 @@ class PtuFile(PqFile):
 
     @property
     def number_bins(self) -> int:
-        """Highest delay time measured. Not available for T2 records."""
+        """Highest delay time with photons. Not available for T2 records."""
         return self._info.bins_used
+
+    @property
+    def number_bins_in_period(self) -> int:
+        """Delay time in one period. Not available for T2 records.
+
+        Same as ``global_resolution / tcspc_resolution``
+
+        """
+        nbins = int(math.floor(self.global_resolution / self.tcspc_resolution))
+        return max(nbins, 1)
 
     @property
     def line_start_mask(self) -> int:
@@ -1232,6 +1248,7 @@ class PtuFile(PqFile):
         """Time per image, line, or point scan cycle in s.
 
         Image scan times include retrace.
+
         """
         return self.global_frame_time * self.global_resolution
 
@@ -1245,11 +1262,13 @@ class PtuFile(PqFile):
 
     @property
     def frequency(self) -> float:
-        """Repetition frequency in s, or 0 if not applicable."""
-        period = self.number_bins_max * float(
-            self.tags.get('MeasDesc_Resolution', 0.0)
-        )
-        return 1 / period if period > 1e-14 else 0
+        """Repetition frequency in Hz.
+
+        The invers of :py:attr:`PtuFile.global_resolution`.
+
+        """
+        period = self.tags.get('MeasDesc_GlobalResolution', 0.0)
+        return 1.0 / period if period > 1e-14 else 0.0
 
     @property
     def syncrate(self) -> int:
@@ -1501,6 +1520,7 @@ class PtuFile(PqFile):
         records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
         sampling_time: int | None = None,
+        dtime: int | None = None,
         asxarray: bool = False,
         out: OutputType = None,
     ) -> NDArray[Any] | DataArray:
@@ -1516,6 +1536,10 @@ class PtuFile(PqFile):
             sampling_time:
                 Global time per sample for T2 mode.
                 The default is :py:meth:`PtuFile.global_pixel_time`.
+            dtime:
+                Specifies number of bins in histogram.
+                If 0, return :py:attr:`number_bins_in_period` bins.
+                If > 0, return up to specified bin.
             asxarray:
                 If true, return ``xarray.DataArray``, else ``numpy.ndarray``
                 (default).
@@ -1550,11 +1574,22 @@ class PtuFile(PqFile):
         rectype = self.tags['TTResultFormat_TTTRRecType']
 
         if self.is_t3:
-            histogram = create_output(
-                out, (self.shape[-2], self.shape[-1]), dtype
-            )
+            if dtime is None:
+                nbins = self.shape[-1]
+            elif dtime == 0:
+                nbins = self.number_bins_in_period
+            elif dtime > 0:
+                nbins = dtime
+            else:
+                raise ValueError(f'{dtime=} < 0')
+            histogram = create_output(out, (self.shape[-2], nbins), dtype)
             decode_t3_histogram(histogram, records, rectype)
-            coords = self.coords['H']
+            coords = numpy.linspace(
+                0,
+                histogram.shape[-1] * self.tags['MeasDesc_Resolution'],
+                histogram.shape[-1],
+                endpoint=False,
+            )
         else:
             if sampling_time is None or sampling_time <= 0:
                 sampling_time = self.global_pixel_time
@@ -1629,8 +1664,11 @@ class PtuFile(PqFile):
                 If < 0, integrate channel axis, else return specified channel.
                 Overrides ``selection`` for axis ``C``.
             dtime:
-                If < 0, integrate delay time axis, else return up to specified
-                bin. Overrides ``selection`` for axis ``H``.
+                Specifies number of bins in image histogram.
+                If 0, return :py:attr:`number_bins_in_period` bins.
+                If < 0, integrate delay time axis.
+                If > 0, return up to specified bin.
+                Overrides ``selection`` for axis ``H``.
             keepdims:
                 If true (default), reduced axes are left as size-one dimension.
             asxarray:
@@ -1717,7 +1755,9 @@ class PtuFile(PqFile):
                 raise IndexError(f'{channel=} out of range')
             selection[-2] = channel if channel >= 0 else slice(None, None, -1)
         if dtime is not None:
-            if dtime >= 0:
+            if dtime == 0:
+                dtime = self.number_bins_in_period
+            if dtime > 0:
                 if dtime > self.number_bins_max:
                     raise IndexError(
                         f'{dtime=} out of range {self.number_bins_max}'
@@ -1859,6 +1899,13 @@ class PtuFile(PqFile):
                     coords[ax] = coords[ax][index]
             elif ax in coords:
                 del coords[ax]
+        if 'H' in dims and len(coords['H']) < shape[-1]:
+            coords['H'] = numpy.linspace(
+                0,
+                shape[-1] * coords['H'][1],
+                shape[-1],
+                endpoint=False,
+            )
         if 'T' in dims:
             coords['T'] = times * self.global_resolution
         attrs = {
@@ -1898,8 +1945,11 @@ class PtuFile(PqFile):
                 If < 0, integrate channel axis, else show specified channel.
                 By default all channels are shown. Applies to T3 images.
             dtime:
-                If < 0 (default), integrate delay time axis, else show up to
-                specified bin. If None, show all bins. Applies to T3 images.
+                Specifies number of bins in T3 histograms.
+                If < 0 (default), integrate delay time axis of images.
+                If 0, show :py:attr:`number_bins_in_period` bins.
+                If > 0, show histograms up to specified bin.
+                If None, show all bins.
             verbose:
                 Print information about histogram arrays.
             show:
@@ -1926,16 +1976,20 @@ class PtuFile(PqFile):
                     print()
                     t.print('decode_image')
                     print()
-                    print(histogram)
+                    print(histogram.squeeze())
                 imshow(
-                    numpy.moveaxis(histogram.values, -2, 0).squeeze(),
+                    numpy.transpose(
+                        histogram.values, (0, 3, 4, 1, 2)
+                    ).squeeze(),
                     title=repr(self),
                     photometric='minisblack',
                     **kwargs,
                 )
                 pyplot.figure()
             t.start()
-            histogram = self.decode_histogram(asxarray=True)
+            # histogram = histogram.sum(axis=(0, 1, 2), dtype=numpy.uint32)
+            dtime = None if dtime is None or dtime < 0 else dtime
+            histogram = self.decode_histogram(asxarray=True, dtime=dtime)
         else:
             if samples is None or samples < 1:
                 samples = 1000
@@ -1950,6 +2004,8 @@ class PtuFile(PqFile):
             print(histogram)
         for i, hist in enumerate(histogram):
             pyplot.plot(hist.coords['H'], hist.values, label=f'ch {i}')
+        if 0.0 < self.frequency:
+            pyplot.axvline(x=1 / self.frequency, color='0.5', ls=':', lw=0.75)
         pyplot.title(repr(self))
         pyplot.xlabel('delay time [s]' if self.is_t3 else 'time [s]')
         pyplot.ylabel('photon count')
