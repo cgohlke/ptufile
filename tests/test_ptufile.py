@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.2.15
+:Version: 2024.2.20
 
 """
 
@@ -244,7 +244,7 @@ def test_ptu_t3_image():
 
         assert ptu.acquisition_time == 2.074774673160728
         assert ptu.frame_time == 0.4149549346321456
-        assert ptu.frequency == 2517700.195304632
+        assert ptu.frequency == 78020000.0
         assert ptu.global_frame_time == 32374784
         assert ptu.global_line_time == 126365  # 126464
         assert ptu.global_pixel_time == 494
@@ -252,6 +252,7 @@ def test_ptu_t3_image():
         assert ptu.line_time == 0.0016196488079979492
         assert ptu.lines_in_frame == 256
         assert ptu.number_bins == 139
+        assert ptu.number_bins_in_period == 132
         assert ptu.number_bins_max == 4096
         assert ptu.number_channels == 1
         assert ptu.number_channels_max == 4
@@ -337,7 +338,7 @@ def test_ptu_t3_sinusoidal():
 
         assert ptu.acquisition_time == 118.88305798296687
         assert ptu.frame_time == 0.9744512873563691
-        assert ptu.frequency == 30517578.246942226
+        assert ptu.frequency == 38898320.0
         assert ptu.global_acquisition_time == 4624351232
         assert ptu.global_frame_time == 37904518
         assert ptu.global_line_time == 18994
@@ -349,6 +350,7 @@ def test_ptu_t3_sinusoidal():
         assert ptu.line_time == 0.0004882987234410124
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3216
+        assert ptu.number_bins_in_period == 3213
         assert ptu.number_bins_max == 4096
         assert ptu.number_channels == 1
         assert ptu.number_channels_max == 4
@@ -404,7 +406,7 @@ def test_ptu_t3_point():
 
         assert ptu.acquisition_time == 59.998948937161735
         assert ptu.frame_time == 0.0010000110003960143
-        assert ptu.frequency == 15258789.123471113
+        assert ptu.frequency == 39998560.0
         assert ptu.global_frame_time == 39999
         assert ptu.global_line_time == 39999
         assert ptu.global_pixel_time == 39999
@@ -412,6 +414,7 @@ def test_ptu_t3_point():
         assert ptu.line_time == 0.0010000110003960143
         assert ptu.lines_in_frame == 1
         assert ptu.number_bins == 1564
+        assert ptu.number_bins_in_period == 1562
         assert ptu.number_bins_max == 4096
         assert ptu.number_channels == 2
         assert ptu.number_channels_max == 4
@@ -603,7 +606,7 @@ def test_issue_skip_frame():
 
         assert ptu.acquisition_time == 174.96876283164778
         assert ptu.frame_time == 1.7496875403137495
-        assert ptu.frequency == 15258789.123471113
+        assert ptu.frequency == 9999690.0
         assert ptu.global_frame_time == 17496333
         assert ptu.global_line_time == 20480
         assert ptu.global_pixel_time == 40
@@ -611,6 +614,7 @@ def test_issue_skip_frame():
         assert ptu.line_time == 0.002048063489968189
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 4096
+        assert ptu.number_bins_in_period == 6250  # > number_bins_max !
         assert ptu.number_bins_max == 4096
         assert ptu.number_channels == 2
         assert ptu.number_channels_max == 4
@@ -660,7 +664,7 @@ def test_issue_marker_order():
 
         assert ptu.acquisition_time == 213.87296482079424
         assert ptu.frame_time == 1.1197537179119068
-        assert ptu.frequency == 15258789.123471113
+        assert ptu.frequency == 20001617.0
         assert ptu.global_frame_time == 22396885
         assert ptu.global_line_time == 20446
         assert ptu.global_pixel_time == 40
@@ -668,6 +672,7 @@ def test_issue_marker_order():
         assert ptu.line_time == 0.0010222173537269511
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3126
+        assert ptu.number_bins_in_period == 3124
         assert ptu.number_bins_max == 4096
         assert ptu.number_channels == 3
         assert ptu.number_channels_max == 4
@@ -726,7 +731,7 @@ def test_issue_empty_line():
 
         assert ptu.acquisition_time == 0.27299666752114843
         assert ptu.frame_time == 0.27299666752114843
-        assert ptu.frequency == 2517700.195304632
+        assert ptu.frequency == 78020000.0
         assert ptu.syncrate == 78020000
         assert ptu.number_markers == 513
         assert ptu.number_photons == 722402
@@ -766,7 +771,7 @@ def test_issue_pixeltime_zero():
 
         assert ptu.acquisition_time == 17.6701460317873
         assert ptu.frame_time == 1.767014600678785
-        assert ptu.frequency == 3051757.8246942223
+        assert ptu.frequency == 40000880.0
         assert ptu.global_frame_time == 70682139
         assert ptu.global_line_time == 81920
         assert ptu.global_pixel_time == 160
@@ -774,6 +779,7 @@ def test_issue_pixeltime_zero():
         assert ptu.line_time == 0.00204795494499121
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 2510
+        assert ptu.number_bins_in_period == 2499
         assert ptu.number_bins_max == 32768
         assert ptu.number_channels == 2
         assert ptu.number_channels_max == 64
@@ -829,6 +835,33 @@ def test_issue_tag_index_order(caplog):
             ]
 
 
+@pytest.mark.parametrize(
+    'dtime, size',
+    [
+        (None, 139),  # last bin with non-zero photons
+        (0, 132),  # last bin matching frequency
+        (-1, 1),  # integrate bins
+        (32, 32),  # specified number of bins
+        (145, 145),
+    ]
+)
+def test_issue_dtime(dtime, size):
+    """Test dtime parameter."""
+    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    im = imread(
+        fname,
+        frame=0,
+        channel=0,
+        dtime=dtime,
+        dtype=numpy.uint8,
+        asxarray=True,
+    )
+    assert im.dtype == numpy.uint8
+    assert im.shape == (1, 256, 256, 1, size)
+    assert im.dims == ('T', 'Y', 'X', 'C', 'H')
+    assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'H')
+
+
 def test_imread():
     """Test imread function."""
     fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
@@ -837,12 +870,12 @@ def test_imread():
         [slice(1), None],  # first frame
         channel=0,
         frame=None,
-        dtime=-1,
-        dtype=numpy.uint16,
+        dtime=0,
+        dtype=numpy.uint8,
         asxarray=True,
     )
-    assert im.dtype == numpy.uint16
-    assert im.shape == (1, 256, 256, 1, 1)
+    assert im.dtype == numpy.uint8
+    assert im.shape == (1, 256, 256, 1, 132)
     assert im.dims == ('T', 'Y', 'X', 'C', 'H')
     assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'H')
 
@@ -864,7 +897,10 @@ def test_glob(path):
             str(ptu)
 
 
-def test_ptu_zip_sequence():
+@pytest.mark.parametrize(
+    'trimdims, dtime, size', [('TC', None, 4096), ('TCH', 0, 132)]
+)
+def test_ptu_zip_sequence(trimdims, dtime, size):
     """Test read Z-stack with imread and tifffile.FileSequence."""
     # requires ~28GB. Do not trim H dimensions such that files match
     from tifffile import FileSequence
@@ -872,8 +908,10 @@ def test_ptu_zip_sequence():
     fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_z_stack.zip'
     with FileSequence(imread, '*.ptu', container=fname) as ptus:
         assert ptus.shape == (11,)
-        stack = ptus.asarray(channel=0, trimdims='TC', ioworkers=1)
-    assert stack.shape == (11, 5, 256, 256, 1, 4096)  # 11 files, 5 frames each
+        stack = ptus.asarray(
+            channel=0, trimdims=trimdims, dtime=dtime, ioworkers=1
+        )
+    assert stack.shape == (11, 5, 256, 256, 1, size)  # 11 files, 5 frames each
     assert stack.dtype == 'uint16'
 
 
@@ -887,18 +925,18 @@ def test_ptu_leica_sequence():
         str(fname),  # glob pattern needs to be str
         pattern=r'_(t)(\d+)_(z)(\d+)',
         imread=imread,
-        chunkshape=(512, 512, 160),  # shape returned by imread
+        chunkshape=(512, 512, 132),  # shape returned by imread
         chunkdtype='uint8',  # dtype returned by imread
         ioworkers=None,  # use multi-threading
         imreadargs=dict(
             frame=0,
             channel=0,
-            dtime=160,  # fix number of bins to 160
+            dtime=132,  # fix number of bins to 132
             dtype='uint8',  # request uint8 output
             keepdims=False,
         ),
     )
-    assert stack.shape == (41, 10, 512, 512, 160)
+    assert stack.shape == (41, 10, 512, 512, 132)
     assert stack.dtype == 'uint8'
     assert stack[24, 4, 228, 279, 16] == 3
 
