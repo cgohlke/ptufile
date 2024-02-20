@@ -8,7 +8,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.15
+:Version: 2024.2.20
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -32,13 +32,19 @@ This revision was tested with the following requirements and dependencies
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
 - `Numpy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.1.1 (recommended)
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.2.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.3 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.2.12 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
 
 Revisions
 ---------
+
+2024.2.20
+
+- Change definition of PtuFile.frequency (breaking).
+- Add option to specify number of bins returned by decode_histogram.
+- Add option to return histograms of one period.
 
 2024.2.15
 
@@ -171,18 +177,18 @@ Alternatively, decode the first channel and integrate all histogram bins
 to a ``xarray.DataArray``, keeping reduced axes:
 
 >>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
-<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)>
+<xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)> ...
 array([[[[[103]],
            ...
          [[ 30]]]]], dtype=uint16)
 Coordinates:
-  * T        (T) float64 0.05625
-  * Y        (Y) float64 -0.0001304 ... 0.0001294
-  * X        (X) float64 -0.0001304 ... 0.0001294
-  * H        (H) float64 0.0
+  * T        (T) float64... 0.05625
+  * Y        (Y) float64... -0.0001304 ... 0.0001294
+  * X        (X) float64... -0.0001304 ... 0.0001294
+  * H        (H) float64... 0.0
 Dimensions without coordinates: C
 Attributes...
-    frequency:      15258789.123471113
+    frequency:      19999200.0
 ...
 >>> ptu.close()
 
