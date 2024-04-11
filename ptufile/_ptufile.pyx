@@ -46,8 +46,6 @@
 
 from libc.stdint cimport int8_t, uint8_t, uint16_t, int16_t, uint32_t, uint64_t
 
-import numpy
-
 cdef packed struct t2_t:
     uint64_t time
     int8_t channel
@@ -716,7 +714,7 @@ def decode_t3_records(
                 decoded[i].channel = ichannel
                 decoded[i].marker = 0
             elif ispecial == 1:
-               # overflow
+                # overflow
                 decoded[i].time = overflow + itime
                 decoded[i].dtime = -1
                 decoded[i].channel = -1
@@ -766,7 +764,7 @@ def decode_t2_records(
                 decoded[i].channel = ichannel
                 decoded[i].marker = 0
             elif ispecial == 1:
-               # overflow
+                # overflow
                 decoded[i].time = overflow + itime
                 decoded[i].channel = -1
                 decoded[i].marker = 0
