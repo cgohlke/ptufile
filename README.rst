@@ -8,7 +8,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.2.20
+:Version: 2024.4.24
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -30,15 +30,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.8, 3.12.2 (64-bit)
+- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3 (64-bit)
 - `Numpy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.2.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.3 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.2.12 (optional)
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.3.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.4 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.4.24 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
+- `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
 
 Revisions
 ---------
+
+2024.4.24
+
+- Build wheels with numpy 2.
 
 2024.2.20
 
@@ -106,9 +111,9 @@ Other Python modules for reading PicoQuant files are:
 - `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_
 - `tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_
 - `picoquantio <https://github.com/tsbischof/picoquantio>`_
-- `ptuparser <https://pypi.org/project/trattoria/>`_
+- `ptuparser <https://pypi.org/project/ptuparser/>`_
 - `phconvert <https://github.com/Photon-HDF5/phconvert/>`_
-- `trattoria <https://pypi.org/project/ptuparser/>`_
+- `trattoria <https://pypi.org/project/trattoria/>`_
   (wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_ and
   `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_)
 - `napari-flim-phasor-plotter
@@ -170,7 +175,7 @@ Slice step sizes define binning, -1 being used to integrate along axis:
 
 >>> ptu[:, ..., 0, ::-1]
 array([[[103, ..., 38],
-              ...
+        ...
         [ 47, ..., 30]]], dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
