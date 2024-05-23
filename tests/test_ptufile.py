@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.4.24
+:Version: 2024.5.24
 
 """
 
@@ -843,7 +843,7 @@ def test_issue_tag_index_order(caplog):
         (-1, 1),  # integrate bins
         (32, 32),  # specified number of bins
         (145, 145),
-    ]
+    ],
 )
 def test_issue_dtime(dtime, size):
     """Test dtime parameter."""
