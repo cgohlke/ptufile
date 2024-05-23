@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.4.24
+:Version: 2024.5.24
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -47,7 +47,7 @@ Quickstart
 Install the ptufile package and all dependencies from the
 `Python Package Index <https://pypi.org/project/ptufile/>`_::
 
-    python -m pip install -U ptufile[all]
+    python -m pip install -U "ptufile[all]"
 
 See `Examples`_ for using the programming interface.
 
@@ -61,19 +61,23 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3 (64-bit)
-- `Numpy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.3.0 (recommended)
+- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.5.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.4 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.4.24 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.5.22 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
 
 Revisions
 ---------
 
+2024.5.24
+
+- Fix docstring examples not correctly rendered on GitHub.
+
 2024.4.24
 
-- Build wheels with numpy 2.
+- Build wheels with NumPy 2.
 
 2024.2.20
 
@@ -133,12 +137,13 @@ The following features are currently not implemented: PT2 and PT3 files,
 decoding images from T2 formats, bidirectional scanning, and deprecated
 image reconstruction.
 
-Other Python modules for reading PicoQuant files are:
+Other Python or C/C++ modules for reading PicoQuant files are:
 
 - `Read_PTU.py
   <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_
 - `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_
 - `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_
+- `FlimReader <https://github.com/flimfit/FlimReader>`_
 - `tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_
 - `picoquantio <https://github.com/tsbischof/picoquantio>`_
 - `ptuparser <https://pypi.org/project/ptuparser/>`_
@@ -205,7 +210,7 @@ Slice step sizes define binning, -1 being used to integrate along axis:
 
 >>> ptu[:, ..., 0, ::-1]
 array([[[103, ..., 38],
-        ...
+              ...
         [ 47, ..., 30]]], dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
@@ -235,7 +240,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.4.24'
+__version__ = '2024.5.24'
 
 __all__ = [
     'imread',
