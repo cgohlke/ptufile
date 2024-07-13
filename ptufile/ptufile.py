@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.5.24
+:Version: 2024.7.13
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -60,16 +60,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3 (64-bit)
-- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.5.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.4 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.5.22 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.4, 3.13b3 (64-bit)
+- `NumPy <https://pypi.org/project/numpy>`_ 2.0.0
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.6.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.7.2 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
 
 Revisions
 ---------
+
+2024.7.13
+
+- Detect point scans in image mode.
+- Deprecate Python 3.9, support Python 3.13.
 
 2024.5.24
 
@@ -150,9 +155,9 @@ Other Python or C/C++ modules for reading PicoQuant files are:
 - `phconvert <https://github.com/Photon-HDF5/phconvert/>`_
 - `trattoria <https://pypi.org/project/trattoria/>`_
   (wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_ and
-  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_)
+  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_)
 - `napari-flim-phasor-plotter
-  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
+  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
 
 Examples
 --------
@@ -180,7 +185,7 @@ Read metadata from a PicoQuant PTU FLIM file:
 >>> ptu.measurement_submode
 <PtuMeasurementSubMode.IMAGE: 3>
 
-Decode TTTR records from the PTU file to ``numpy.recarray``.
+Decode TTTR records from the PTU file to ``numpy.recarray``:
 
 >>> decoded = ptu.decode_records()
 
@@ -240,7 +245,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.5.24'
+__version__ = '2024.7.13'
 
 __all__ = [
     'imread',
@@ -1058,6 +1063,26 @@ class PtuFile(PqFile):
         return PtuMeasurementSubMode(self.tags['Measurement_SubMode'])
 
     @property
+    def measurement_ndim(self) -> int:
+        """Dimensionality of measurement."""
+        # Measurement_SubMode is not always correct
+        submode = self.tags['Measurement_SubMode']
+        if (
+            submode == 3
+            and self.tags.get('ImgHdr_Dimensions', 3) == 3  # optional
+            and self.tags.get('ImgHdr_PixY', 1) > 1  # may be missing
+        ):
+            return 3
+        if (
+            submode == 2
+            and self.tags.get('ImgHdr_Dimensions', 2) == 2  # optional
+            and self.tags.get('ImgHdr_PixX', 1) > 1  # may be missing
+        ):
+            # TODO: need linescan test file
+            return 2
+        return 1
+
+    @property
     def scanner(self) -> PtuScannerType | None:
         """Scanner hardware, or None if not specified."""
         if 'ImgHdr_Ident' in self.tags:
@@ -1218,7 +1243,7 @@ class PtuFile(PqFile):
     @property
     def pixels_in_line(self) -> int:
         """Number of pixels in line."""
-        ndim = self.tags['Measurement_SubMode']
+        ndim = self.measurement_ndim
         if ndim == 3:
             # image
             pixels = self.tags['ImgHdr_PixX']
@@ -1238,8 +1263,7 @@ class PtuFile(PqFile):
     @property
     def lines_in_frame(self) -> int:
         """Number of lines in frame."""
-        if self.tags['Measurement_SubMode'] == 3:
-            # image
+        if self.measurement_ndim == 3:
             return max(1, int(self.tags['ImgHdr_PixY']))
         return 1
 
@@ -1274,7 +1298,7 @@ class PtuFile(PqFile):
     def frequency(self) -> float:
         """Repetition frequency in Hz.
 
-        The invers of :py:attr:`PtuFile.global_resolution`.
+        The inverse of :py:attr:`PtuFile.global_resolution`.
 
         """
         period = self.tags.get('MeasDesc_GlobalResolution', 0.0)
@@ -1344,7 +1368,7 @@ class PtuFile(PqFile):
         else:
             nbins = self.number_bins_max
 
-        ndim = self.tags['Measurement_SubMode']
+        ndim = self.measurement_ndim
         if ndim == 3:
             return (
                 max(self._info.frames, 1),
@@ -1373,7 +1397,7 @@ class PtuFile(PqFile):
         """Axes labels for each dimension in image histogram array."""
         if not self.shape:
             return ()
-        ndim = self.tags['Measurement_SubMode']
+        ndim = self.measurement_ndim
         if ndim == 3:
             return ('T', 'Y', 'X', 'C', 'H')
         if ndim == 2:
@@ -1395,7 +1419,7 @@ class PtuFile(PqFile):
         """
         if not self.shape:
             return {}
-        ndim = self.tags['Measurement_SubMode']
+        ndim = self.measurement_ndim
         coords = {}
         shape = self.shape
         # exact time coordinates must be decoded from records
@@ -1974,10 +1998,7 @@ class PtuFile(PqFile):
 
         t = Timer()
         if self.is_t3:
-            if (
-                self.measurement_submode != PtuMeasurementSubMode.POINT
-                and not self.is_bidirectional
-            ):
+            if self.measurement_ndim > 1 and not self.is_bidirectional:
                 t.start()
                 histogram: Any = self.decode_image(
                     frame=frame, channel=channel, dtime=dtime, asxarray=True
@@ -2104,7 +2125,7 @@ def sinusoidal_correction(
         pixel index in line.
 
     """
-    # TODO: Leica uses fraction of overal period of sinus wave?
+    # TODO: Leica uses fraction of overall period of sinus wave?
     dtype = numpy.dtype(numpy.uint16 if dtype is None else dtype)
     if sincorrect <= 0.0 or sincorrect > 100.0:
         raise ValueError(f'{sincorrect=} out of range')
@@ -2230,7 +2251,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(pq)
                 print()
         except ValueError as exc:
-            # enable for debugging
+            # raise  # enable for debugging
             print(fname, exc)
             continue
 
