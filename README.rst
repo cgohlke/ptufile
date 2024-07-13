@@ -11,7 +11,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.5.24
+:Version: 2024.7.13
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,16 +33,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.9.13, 3.10.11, 3.11.9, 3.12.3 (64-bit)
-- `NumPy <https://pypi.org/project/numpy>`_ 1.26.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.5.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.8.4 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.5.22 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.12.1 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.4, 3.13b3 (64-bit)
+- `NumPy <https://pypi.org/project/numpy>`_ 2.0.0
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.6.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.7.2 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
 
 Revisions
 ---------
+
+2024.7.13
+
+- Detect point scans in image mode.
+- Deprecate Python 3.9, support Python 3.13.
 
 2024.5.24
 
@@ -123,9 +128,9 @@ Other Python or C/C++ modules for reading PicoQuant files are:
 - `phconvert <https://github.com/Photon-HDF5/phconvert/>`_
 - `trattoria <https://pypi.org/project/trattoria/>`_
   (wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_ and
-  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/tree/master/tttr-toolbox>`_)
+  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_)
 - `napari-flim-phasor-plotter
-  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/main/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
+  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
 
 Examples
 --------
@@ -157,7 +162,7 @@ Read metadata from a PicoQuant PTU FLIM file:
     >>> ptu.measurement_submode
     <PtuMeasurementSubMode.IMAGE: 3>
 
-Decode TTTR records from the PTU file to ``numpy.recarray``.
+Decode TTTR records from the PTU file to ``numpy.recarray``:
 
 .. code-block:: python
 
