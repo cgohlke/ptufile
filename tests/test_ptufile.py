@@ -29,7 +29,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.5.24
+:Version: 2024.7.13
 
 """
 
@@ -66,12 +66,25 @@ HERE = pathlib.Path(os.path.dirname(__file__))
 FILES = [
     # PicoHarpT3
     'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu',
-    # MultiHarpT3
-    'Tutorials.sptw/Hyperosmotic_Shock_MDCK_Cells.ptu',
     # PicoHarpT2
     'Samples.sptw/Atto488_diff_cw_total_correlation.ptu',
+    # HydraHarpT3
+    'picoquant-sample-data/hydraharp/v10_t3.ptu',
     # HydraHarpT2
     'Samples.sptw/NV-Center_for_Antibunching_several.ptu',
+    # HydraHarp2T3
+    'tttr-data/imaging/pq/Microtime200_HH400/beads.ptu',
+    # HydraHarp2T2
+    'tttr-data/pq/ptu/pq_ptu_hh_t2_test2.ptu',
+    # TODO: TimeHarp260NT3
+    # TimeHarp260NT2
+    'ptuparser/default_007.ptu',
+    # TimeHarp260PT3
+    'tttr-data/imaging/pq/Microtime200_TH260/beads.ptu',
+    # TODO: TimeHarp260PT2
+    # TODO: GenericT2/MultiHarpT2 or Picoharp330T2
+    # GenericT3/MultiHarpT3
+    'Tutorials.sptw/Hyperosmotic_Shock_MDCK_Cells.ptu',
 ]
 
 
@@ -168,6 +181,7 @@ def test_ptu(filetype):
             assert ptu.measurement_mode == PtuMeasurementMode.T3
             assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
             assert ptu.scanner == PtuScannerType.LSM
+            assert ptu.measurement_ndim == 3
             assert ptu.filename == (
                 os.fspath(fname) if filetype == str else ''
             )
@@ -229,6 +243,7 @@ def test_ptu_t3_image():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
 
         assert ptu.is_image
         assert ptu.is_t3
@@ -321,6 +336,7 @@ def test_ptu_t3_sinusoidal():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
 
         assert ptu.is_image
         assert ptu.is_t3
@@ -391,6 +407,7 @@ def test_ptu_t3_point():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.POINT
         assert ptu.scanner == PtuScannerType.PI_E710
+        assert ptu.measurement_ndim == 1
 
         assert not ptu.is_image
         assert ptu.is_t3
@@ -450,7 +467,7 @@ def test_ptu_decode_records(fname):
         assert decoded[decoded['channel'] >= 0].size == ptu.number_photons
         assert decoded[decoded['marker'] > 0].size == ptu.number_markers
         nframes = decoded[decoded['marker'] & ptu.frame_change_mask > 0].size
-        if ptu.shape:
+        if ptu.shape and ptu.tags['Measurement_SubMode'] > 0:
             assert abs(nframes - ptu.shape[0]) < 2
         if ptu.is_t3:
             assert decoded['dtime'].max() + 1 == ptu.number_bins
@@ -581,6 +598,62 @@ def test_ptu_getitem():
             im = ptu[1.0]  # invalid type
 
 
+def test_issue_falcon_point():
+    """Test PTU from FALCON with no ImgHdr_PixY."""
+    # file produced by FALCON in image mode but no ImgHdr_PixX/Y
+    fname = HERE / 'FALCON_ptu_examples/40MHz_example.ptu'
+
+    with PtuFile(fname) as ptu:
+        assert ptu.version == '00.0.1'
+        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PtuRecordType.PicoHarpT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 1
+
+        assert ptu.shape == (3, 1, 269)
+        assert ptu.dims == ('T', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'H')
+        # TODO: verify coords
+
+        assert ptu._info.skip_first_frame == 0
+        assert ptu._info.skip_last_frame == 0
+
+        assert ptu.frame_change_mask == 0
+        assert ptu.line_start_mask == 0
+        assert ptu.line_stop_mask == 0
+
+        assert ptu.acquisition_time == 15.4790509824
+        assert ptu.frame_time == 15.4790509824
+        assert ptu.frequency == 312500000.0
+        assert ptu.global_frame_time == 4837203432
+        assert ptu.global_line_time == 312500
+        assert ptu.global_pixel_time == 312500
+        assert ptu.global_resolution == 3.2e-09
+        assert ptu.line_time == 0.001
+        assert ptu.lines_in_frame == 1
+        assert ptu.number_bins == 269
+        assert ptu.number_bins_in_period == 32
+        assert ptu.number_bins_max == 4096
+        assert ptu.number_channels == 1
+        assert ptu.number_channels_max == 4
+        assert ptu.number_lines == 0
+        assert ptu.number_markers == 0
+        assert ptu.number_photons == 1016546
+        assert ptu.number_records == 1090355
+        assert ptu.pixel_time == 0.001
+        assert ptu.pixels_in_frame == 1
+        assert ptu.pixels_in_line == 1
+        assert ptu.syncrate == 0
+        assert ptu.tcspc_resolution == 9.696969697e-11
+
+        im = ptu.decode_image(channel=0, keepdims=False, dtype='uint32')
+        assert im.shape == (3, 269)
+        assert im.dtype == numpy.uint32
+        assert im[1, 23] == 1
+
+
 def test_issue_skip_frame():
     """Test PTU with incomplete last frame."""
     fname = HERE / 'Samples.sptw/GUVs.ptu'
@@ -591,6 +664,7 @@ def test_issue_skip_frame():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
 
         assert ptu.shape == (100, 512, 512, 2, 4096)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -649,6 +723,7 @@ def test_issue_marker_order():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
 
         assert ptu.shape == (191, 512, 512, 3, 3126)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -716,6 +791,7 @@ def test_issue_empty_line():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
 
         assert ptu.shape == (1, 256, 256, 1, 133)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -753,6 +829,7 @@ def test_issue_pixeltime_zero():
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner is None
+        assert ptu.measurement_ndim == 3
 
         assert ptu.tags['ImgHdr_TimePerPixel'] == 0  # nasty
         assert ptu.global_pixel_time == 160
