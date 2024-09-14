@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.7.13
+:Version: 2024.9.14
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -60,16 +60,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.4, 3.13b3 (64-bit)
-- `NumPy <https://pypi.org/project/numpy>`_ 2.0.0
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.6.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.1 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.7.2 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.5, 3.13.0rc2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.1.1
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.9.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.8.30 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.9.14
+
+- Improve typing.
 
 2024.7.13
 
@@ -245,7 +249,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.7.13'
+__version__ = '2024.9.14'
 
 __all__ = [
     'imread',
@@ -276,25 +280,26 @@ import sys
 import time
 import uuid
 from functools import cached_property
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, final, overload
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import EllipsisType
-    from typing import Any, BinaryIO, Literal
+    from typing import IO, Any, Literal
 
     from numpy.typing import DTypeLike, NDArray
     from xarray import DataArray
 
     Dimension = Literal['T', 'C', 'H']
-    OutputType = str | BinaryIO | NDArray[Any] | None
+    OutputType = str | IO[bytes] | NDArray[Any] | None
 
 
 import numpy
 
 
+@overload
 def imread(
-    file: str | os.PathLike | BinaryIO,
+    file: str | os.PathLike[str] | IO[bytes],
     /,
     selection: Sequence[int | slice | EllipsisType | None] | None = None,
     *,
@@ -302,7 +307,57 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
-    trimdims: Sequence[Dimension] | None = None,
+    trimdims: Sequence[Dimension] | str | None = None,
+    keepdims: bool = True,
+    asxarray: Literal[False] = ...,
+    out: OutputType = None,
+) -> NDArray[Any]: ...
+
+
+@overload
+def imread(
+    file: str | os.PathLike[str] | IO[bytes],
+    /,
+    selection: Sequence[int | slice | EllipsisType | None] | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    channel: int | None = None,
+    frame: int | None = None,
+    dtime: int | None = None,
+    trimdims: Sequence[Dimension] | str | None = None,
+    keepdims: bool = True,
+    asxarray: Literal[True] = ...,
+    out: OutputType = None,
+) -> DataArray: ...
+
+
+@overload
+def imread(
+    file: str | os.PathLike[str] | IO[bytes],
+    /,
+    selection: Sequence[int | slice | EllipsisType | None] | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    channel: int | None = None,
+    frame: int | None = None,
+    dtime: int | None = None,
+    trimdims: Sequence[Dimension] | str | None = None,
+    keepdims: bool = True,
+    asxarray: bool = False,
+    out: OutputType = None,
+) -> NDArray[Any] | DataArray: ...
+
+
+def imread(
+    file: str | os.PathLike[str] | IO[bytes],
+    /,
+    selection: Sequence[int | slice | EllipsisType | None] | None = None,
+    *,
+    dtype: DTypeLike | None = None,
+    channel: int | None = None,
+    frame: int | None = None,
+    dtime: int | None = None,
+    trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
     asxarray: bool = False,
     out: OutputType = None,
@@ -610,7 +665,7 @@ class PqFile:
     tags: dict[str, Any]
     """PicoQuant unified tags."""
 
-    _fh: BinaryIO
+    _fh: IO[bytes]
     _close: bool  # file needs to be closed
     _data_offset: int  # position of raw data in file
 
@@ -619,7 +674,7 @@ class PqFile:
 
     def __init__(
         self,
-        file: str | os.PathLike | BinaryIO,
+        file: str | os.PathLike[str] | IO[bytes],
         /,
         *,
         fastload: bool = False,
@@ -653,20 +708,28 @@ class PqFile:
         self.version = fh.read(8).strip(b'\0').decode()
         tags = self.tags
 
-        def errmsg(msg, tagid, index, typecode, value):
+        def errmsg(
+            msg: str, tagid: str, index: int, typecode: int, value: Any
+        ) -> str:
             return (
                 f'{msg} @ {self.name!r} '
                 f'{tagid=}, {index=}, {typecode=}, {value=!r}'
             )[:80]
 
+        tagid: str
+        index: int
+        typecode: int
+        value: Any
         ty = PqTagType
         unpack = struct.unpack
         try:
             while True:
                 # offset = fh.tell()
-                tagid, index, typecode, value = unpack('<32siI8s', fh.read(48))
+                tagid_, index, typecode, value = unpack(
+                    '<32siI8s', fh.read(48)
+                )
                 # print(tagid.strip(b'\0'), index, typecode, value)
-                tagid = tagid.rstrip(b'\0').decode('ascii', errors='ignore')
+                tagid = tagid_.rstrip(b'\0').decode('ascii', errors='ignore')
                 # disabled: too many errors in PQRES
                 # if offset % 8:
                 #     logger().error(
@@ -803,7 +866,9 @@ class PqFile:
     def __enter__(self) -> PqFile:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:  # type: ignore
+    def __exit__(  # type: ignore[no-untyped-def]
+        self, exc_type, exc_value, traceback
+    ) -> None:
         self.close()
 
     def __repr__(self) -> str:
@@ -857,7 +922,7 @@ class PhuFile(PqFile):
     _MAGIC: set[PqFileMagic] = {PqFileMagic.PHU}
     _STR_ = ('magic', 'version', 'measurement_mode', 'measurement_submode')
 
-    def __init__(self, file: str | os.PathLike | BinaryIO, /) -> None:
+    def __init__(self, file: str | os.PathLike[str] | IO[bytes], /) -> None:
         super().__init__(file)
 
     def __enter__(self) -> PhuFile:
@@ -888,6 +953,30 @@ class PhuFile(PqFile):
     def number_histograms(self) -> int:
         """Number of histograms stored in file."""
         return int(self.tags['HistoResult_NumberOfCurves'])
+
+    @overload
+    def histograms(
+        self,
+        index: int | slice | None = None,
+        /,
+        asxarray: Literal[False] = ...,
+    ) -> tuple[NDArray[numpy.uint32], ...]: ...
+
+    @overload
+    def histograms(
+        self,
+        index: int | slice | None = None,
+        /,
+        asxarray: Literal[True] = ...,
+    ) -> tuple[DataArray, ...]: ...
+
+    @overload
+    def histograms(
+        self,
+        index: int | slice | None = None,
+        /,
+        asxarray: bool = ...,
+    ) -> tuple[NDArray[numpy.uint32] | DataArray, ...]: ...
 
     def histograms(
         self, index: int | slice | None = None, /, asxarray: bool = False
@@ -968,8 +1057,8 @@ class PhuFile(PqFile):
                 print(hist)
 
         for i, hist in enumerate(histograms):
-            y = numpy.trim_zeros(hist.values, trim='b')  # type: ignore
-            x = hist.coords['H'].values[: y.size]  # type: ignore
+            y = numpy.trim_zeros(hist.values, trim='b')
+            x = hist.coords['H'].values[: y.size]
             pyplot.plot(x, y, label=f'ch {i}')
         pyplot.title(repr(self))
         pyplot.xlabel('delay time [s]')
@@ -1006,7 +1095,7 @@ class PtuFile(PqFile):
 
     _trimdims: set[str]
     _asxarray: bool
-    _dtype: numpy.dtype
+    _dtype: numpy.dtype[Any]
 
     _MAGIC: set[PqFileMagic] = {PqFileMagic.PTU}
     _STR_ = (
@@ -1023,10 +1112,10 @@ class PtuFile(PqFile):
 
     def __init__(
         self,
-        file: str | os.PathLike | BinaryIO,
+        file: str | os.PathLike[str] | IO[bytes],
         /,
         *,
-        trimdims: Sequence[Dimension] | None = None,
+        trimdims: Sequence[Dimension] | str | None = None,
     ) -> None:
         super().__init__(file)
         if trimdims is None:
@@ -1160,19 +1249,19 @@ class PtuFile(PqFile):
     def line_start_mask(self) -> int:
         """Marker mask defining line start, or 0 if not defined."""
         value = self.tags.get('ImgHdr_LineStart', None)
-        return 2 ** (value - 1) if value is not None else 0
+        return int(2 ** (value - 1) if value is not None else 0)
 
     @property
     def line_stop_mask(self) -> int:
         """Marker mask defining line end, or 0 if not defined."""
         value = self.tags.get('ImgHdr_LineStop', None)
-        return 2 ** (value - 1) if value is not None else 0
+        return int(2 ** (value - 1) if value is not None else 0)
 
     @property
     def frame_change_mask(self) -> int:
         """Marker mask defining image frame change, or 0 if not defined."""
         value = self.tags.get('ImgHdr_Frame', None)
-        return 2 ** (value - 1) if value is not None else 0
+        return int(2 ** (value - 1) if value is not None else 0)
 
     @property
     def global_pixel_time(self) -> int:
@@ -1301,7 +1390,7 @@ class PtuFile(PqFile):
         The inverse of :py:attr:`PtuFile.global_resolution`.
 
         """
-        period = self.tags.get('MeasDesc_GlobalResolution', 0.0)
+        period = float(self.tags.get('MeasDesc_GlobalResolution', 0.0))
         return 1.0 / period if period > 1e-14 else 0.0
 
     @property
@@ -1321,7 +1410,7 @@ class PtuFile(PqFile):
     @property
     def is_t3(self) -> bool:
         """File contains T3 records."""
-        return self.tags['Measurement_Mode'] == 3
+        return bool(self.tags['Measurement_Mode'] == 3)
         # return self.tags['TTResultFormat_TTTRRecType'] in {
         #     0x00010303, 0x00010304, 0x01010304,
         #     0x00010305, 0x00010306, 0x00010307,
@@ -1330,7 +1419,7 @@ class PtuFile(PqFile):
     @property
     def is_bidirectional(self) -> bool:
         """Bidirectional scan mode."""
-        return self.tags.get('ImgHdr_BiDirect', False)
+        return bool(self.tags.get('ImgHdr_BiDirect', False))
 
     @property
     def use_xarray(self) -> bool:
@@ -1342,7 +1431,7 @@ class PtuFile(PqFile):
         self._asxarray = bool(value)
 
     @property
-    def dtype(self) -> numpy.dtype:
+    def dtype(self) -> numpy.dtype[Any]:
         """Data type of image histogram array."""
         return self._dtype
 
@@ -1410,7 +1499,7 @@ class PtuFile(PqFile):
         return len(self.dims)
 
     @cached_property
-    def coords(self) -> dict[str, NDArray]:
+    def coords(self) -> dict[str, NDArray[Any]]:
         """Coordinate arrays labelling each point in image histogram array.
 
         Coordinates for the time axis are approximate. Exact coordinates are
@@ -1486,10 +1575,10 @@ class PtuFile(PqFile):
                 f"{self.tags['TTResultFormat_BitsPerRecord']}"
             )
         count = self.tags['TTResult_NumberOfRecords']
-        result: Any
+        result: NDArray[numpy.uint32]
         if memmap:
             return numpy.memmap(
-                self._fh,  # type: ignore
+                self._fh,
                 dtype=numpy.uint32,
                 mode='r',
                 offset=self._data_offset,
@@ -1497,7 +1586,7 @@ class PtuFile(PqFile):
             )
         result = numpy.empty(count, numpy.uint32)
         self._fh.seek(self._data_offset)
-        n = self._fh.readinto(result)  # type: ignore
+        n = self._fh.readinto(result)  # type: ignore[attr-defined]
         if n != count * 4:
             logger().error(f'{self!r} expected {count} records, got {n // 4}')
             result = result[: n // 4]
@@ -1546,6 +1635,45 @@ class PtuFile(PqFile):
             result = create_output(out, (records.size,), T2_RECORD_DTYPE)
             decode_t2_records(result, records, rectype)
         return result
+
+    @overload
+    def decode_histogram(
+        self,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        sampling_time: int | None = None,
+        dtime: int | None = None,
+        asxarray: Literal[False] = ...,
+        out: OutputType = None,
+    ) -> NDArray[Any]: ...
+
+    @overload
+    def decode_histogram(
+        self,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        sampling_time: int | None = None,
+        dtime: int | None = None,
+        asxarray: Literal[True] = ...,
+        out: OutputType = None,
+    ) -> DataArray: ...
+
+    @overload
+    def decode_histogram(
+        self,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        sampling_time: int | None = None,
+        dtime: int | None = None,
+        asxarray: bool = ...,
+        out: OutputType = None,
+    ) -> NDArray[Any] | DataArray: ...
 
     def decode_histogram(
         self,
@@ -1655,6 +1783,54 @@ class PtuFile(PqFile):
             coords={'H': coords},  # name=self.name
         )
 
+    @overload
+    def decode_image(
+        self,
+        selection: Sequence[int | slice | EllipsisType | None] | None = None,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        frame: int | None = None,
+        channel: int | None = None,
+        dtime: int | None = None,
+        keepdims: bool = True,
+        asxarray: Literal[False] = ...,
+        out: OutputType = None,
+    ) -> NDArray[Any]: ...
+
+    @overload
+    def decode_image(
+        self,
+        selection: Sequence[int | slice | EllipsisType | None] | None = None,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        frame: int | None = None,
+        channel: int | None = None,
+        dtime: int | None = None,
+        keepdims: bool = True,
+        asxarray: Literal[True] = ...,
+        out: OutputType = None,
+    ) -> DataArray: ...
+
+    @overload
+    def decode_image(
+        self,
+        selection: Sequence[int | slice | EllipsisType | None] | None = None,
+        /,
+        *,
+        records: NDArray[numpy.uint32] | None = None,
+        dtype: DTypeLike | None = None,
+        frame: int | None = None,
+        channel: int | None = None,
+        dtime: int | None = None,
+        keepdims: bool = True,
+        asxarray: bool = ...,
+        out: OutputType = None,
+    ) -> NDArray[Any] | DataArray: ...
+
     def decode_image(
         self,
         selection: Sequence[int | slice | EllipsisType | None] | None = None,
@@ -1756,9 +1932,9 @@ class PtuFile(PqFile):
             selection = [None] * ndim
         else:
             try:
-                len(selection)  # type: ignore
+                len(selection)
             except TypeError:
-                selection = [selection]  # type: ignore
+                selection = [selection]  # type: ignore[list-item]
 
             if len(selection) > ndim:
                 raise IndexError(f'too many indices in {selection=}')
@@ -1964,7 +2140,7 @@ class PtuFile(PqFile):
         dtime: int | None = -1,
         verbose: bool = False,
         show: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Plot histograms using matplotlib.
 
@@ -2142,11 +2318,11 @@ def sinusoidal_correction(
 
 
 def create_output(
-    out: str | BinaryIO | NDArray[Any] | None,
+    out: str | IO[bytes] | NDArray[Any] | None,
     /,
     shape: tuple[int, ...],
-    dtype: numpy.dtype,
-) -> NDArray[Any] | numpy.memmap:
+    dtype: DTypeLike,
+) -> NDArray[Any] | numpy.memmap[Any, Any]:
     """Return NumPy array where images of shape and dtype can be copied."""
     if out is None:
         return numpy.zeros(shape, dtype)
@@ -2162,7 +2338,7 @@ def create_output(
     return numpy.memmap(out, shape=shape, dtype=dtype, mode='w+')
 
 
-def indent(*args: Any, sep='', end='') -> str:
+def indent(*args: Any, sep: str = '', end: str = '') -> str:
     """Return joined string representations of objects with indented lines."""
     text = (sep + '\n').join(
         arg if isinstance(arg, str) else repr(arg) for arg in args
@@ -2212,8 +2388,7 @@ def main(argv: list[str] | None = None) -> int:
         path = askopenfilename(
             title='Select a TIFF file',
             filetypes=[
-                (f'{ext.upper()} files', f'*{ext}')
-                for ext in FILE_EXTENSIONS.keys()
+                (f'{ext.upper()} files', f'*{ext}') for ext in FILE_EXTENSIONS
             ]
             + [('allfiles', '*')],
         )
