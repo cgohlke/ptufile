@@ -46,13 +46,12 @@ from .ptufile import PtuFile
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import EllipsisType
+    from typing import Any
 
-    from numpy.typing import DTypeLike
-
-    from .ptufile import Dimension
+    from numpy.typing import ArrayLike, DTypeLike, NDArray
 
 
-class Ptu(Codec):
+class Ptu(Codec):  # type: ignore[misc]
     """Ptu codec for Numcodecs."""
 
     codec_id = 'ptufile'
@@ -65,7 +64,7 @@ class Ptu(Codec):
         channel: int | None = None,
         frame: int | None = None,
         dtime: int | None = None,
-        trimdims: Sequence[Dimension] | None = None,
+        trimdims: str | None = None,
         keepdims: bool = True,
     ):
         if selection is not None:
@@ -79,11 +78,11 @@ class Ptu(Codec):
         self.trimdims = trimdims
         self.keepdims = bool(keepdims)
 
-    def encode(self, buf):
+    def encode(self, buf: ArrayLike) -> None:
         """Return Ptu file as bytes."""
-        return NotImplementedError
+        raise NotImplementedError
 
-    def decode(self, buf, out=None):
+    def decode(self, buf: bytes, out: Any | None = None) -> NDArray[Any]:
         """Return decoded image as NumPy array."""
         with BytesIO(buf) as fh:
             with PtuFile(fh) as ptu:
