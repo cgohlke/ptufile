@@ -11,7 +11,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.7.13
+:Version: 2024.9.14
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,16 +33,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.4, 3.13b3 (64-bit)
-- `NumPy <https://pypi.org/project/numpy>`_ 2.0.0
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.6.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.1 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.7.2 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.5, 3.13.0rc2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.1.1
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.9.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.8.30 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.0.10 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.9.14
+
+- Improve typing.
 
 2024.7.13
 
