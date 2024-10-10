@@ -136,14 +136,18 @@ def decode_info(
     cdef:
         ssize_t nrecords = records.size
         ssize_t i, y, maxchannels, maxbins, skip_first_frame, skip_last_frame
-        uint64_t nchannels, nbins, nframes, nphotons, nmarkers, nlines
-        uint64_t overflow, time_line_start, time_in_lines
+        ssize_t channels_active_first, channels_active_last
+        uint64_t nbins, nframes, nphotons, nmarkers, nlines
+        uint64_t overflow, time_line_start, time_in_lines, channels_active
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
         decode_func_t decode_func
 
     if init_format(format, &decode_func, &maxbins, &maxchannels) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
+
+    # channels_active is 64-bit
+    maxchannels = min(maxchannels, 64)
 
     # Unfortunately Cython's OpenMP does not support min/max reduction
     # https://github.com/cython/cython/issues/3585#issuecomment-625961911
@@ -153,10 +157,10 @@ def decode_info(
         skip_last_frame = 0
         time_line_start = 0
         time_in_lines = 0
+        channels_active = 0
         overflow = 0
         itime = 0
         nphotons = 0
-        nchannels = 0
         nbins = 0
         nmarkers = 0
         nlines = 0
@@ -174,8 +178,8 @@ def decode_info(
             )
             if ispecial == 0:
                 nphotons += 1
-                if ichannel > nchannels and ichannel < maxchannels:
-                    nchannels = ichannel
+                if ichannel < maxchannels:
+                    channels_active |= (<uint64_t> 1) << ichannel
                 if idtime > nbins and idtime < maxbins:
                     nbins = idtime
             elif ispecial == 2:
@@ -203,7 +207,17 @@ def decode_info(
                         nframes += 1
                     y += 1
 
-        nchannels += 1
+        channels_active_first = 64
+        channels_active_last = 0
+        for i in range(64):
+            if channels_active & ((<uint64_t> 1) << i):
+                if i < channels_active_first:
+                    channels_active_first = i
+                channels_active_last = i
+        if channels_active_first == 64:
+            channels_active_first = 0
+            channels_active_last = 0
+
         nbins = 0 if maxbins == 0 else nbins + 1
 
         if nframes > 1 and y > 0 and lines_in_frame > y + 1:
@@ -239,7 +253,9 @@ def decode_info(
         nframes,
         nlines,
         maxchannels,
-        nchannels,
+        channels_active,
+        channels_active_first,
+        channels_active_last,
         maxbins,
         nbins,
         skip_first_frame,
@@ -594,7 +610,8 @@ def decode_t3_image(
 def decode_t3_histogram(
     uint_t[:, ::1] histogram,
     const uint32_t[::1] records,
-    const uint32_t format
+    const uint32_t format,
+    const ssize_t startc,
 ):
     """Decode PicoQuant T3 TTTR records to histogram per channel."""
     cdef:
@@ -609,6 +626,8 @@ def decode_t3_histogram(
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins == 0:
         raise ValueError(f'not a T3 {format=:02x}')
+    if startc < 0:
+        raise ValueError(f'{startc=} < 0')
 
     nchannels, nbins = histogram.shape[:2]
 
@@ -624,6 +643,7 @@ def decode_t3_histogram(
                 &imarker,
                 &ispecial
             )
+            ichannel -= <uint32_t> startc  # may underflow
             if ispecial == 0 and ichannel < nchannels and idtime < nbins:
                 histogram[ichannel, idtime] += 1
                 # if wraparound:
@@ -635,6 +655,7 @@ def decode_t2_histogram(
     const uint32_t[::1] records,
     const uint32_t format,
     const uint64_t bin_time,
+    const ssize_t startc,
 ):
     """Decode PicoQuant T2 TTTR records to histogram per channel."""
     cdef:
@@ -654,6 +675,8 @@ def decode_t2_histogram(
         raise ValueError(f'not a T2 {format=:02x}')
     if bin_time == 0:
         raise ValueError(f'invalid {bin_time=}')
+    if startc < 0:
+        raise ValueError(f'{startc=} < 0')
 
     nchannels, nbins = histogram.shape[:2]
 
@@ -672,6 +695,7 @@ def decode_t2_histogram(
             ibin = <ssize_t> ((overflow + itime) // bin_time)
             if ibin >= nbins:
                 break
+            ichannel -= <uint32_t> startc  # may underflow
             if ispecial == 0 and ichannel < nchannels:
                 histogram[ichannel, ibin] += 1
 
