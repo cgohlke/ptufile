@@ -11,7 +11,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.9.14
+:Version: 2024.10.10
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,16 +33,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.5, 3.13.0rc2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.1.1
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.1.2
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.9.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.8.30 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.9.20 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.1 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.10.10
+
+- Also trim leading channels without photons (breaking).
+- Add property to identify channels with photons.
 
 2024.9.14
 
@@ -117,7 +122,7 @@ The PicoQuant unified file formats are documented at the
 
 The following features are currently not implemented: PT2 and PT3 files,
 decoding images from T2 formats, bidirectional scanning, and deprecated
-image reconstruction.
+image reconstruction. Line-scanning is not tested.
 
 Other Python or C/C++ modules for reading PicoQuant files are:
 
@@ -198,6 +203,8 @@ Get information about the FLIM image histogram in the PTU file:
     {'T': ..., 'Y': ..., 'X': ..., 'H': ...}
     >>> ptu.dtype
     dtype('uint16')
+    >>> ptu.active_channels
+    (0, 1)
 
 Decode parts of the image histogram to ``numpy.ndarray`` using slice notation.
 Slice step sizes define binning, -1 being used to integrate along axis:
@@ -223,8 +230,8 @@ to a ``xarray.DataArray``, keeping reduced axes:
       * T        (T) float64... 0.05625
       * Y        (Y) float64... -0.0001304 ... 0.0001294
       * X        (X) float64... -0.0001304 ... 0.0001294
+      * C        (C) uint8... 0
       * H        (H) float64... 0.0
-    Dimensions without coordinates: C
     Attributes...
         frequency:      19999200.0
     ...
