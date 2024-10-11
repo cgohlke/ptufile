@@ -32,7 +32,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.9.14
+:Version: 2024.10.10
 
 """
 
@@ -253,7 +253,8 @@ def test_ptu_t3_image():
 
         assert ptu.shape == (5, 256, 256, 1, 139)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0,)
         # TODO: verify coords
 
         assert ptu.frame_change_mask == 4
@@ -327,6 +328,95 @@ def test_ptu_t3_image():
             ptu.decode_image(dtype='int16')
 
 
+def test_ptu_channels():
+    """Test decode T3 image with empty leading channels."""
+    fname = HERE / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
+    with PtuFile(fname) as ptu:
+        str(ptu)
+        assert str(ptu.guid) == 'b767c46e-9693-4ad9-9fcf-7fab5e4377fc'
+        assert ptu.version == '1.0.00'
+
+        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PtuRecordType.GenericT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.FLIMBEE
+        assert ptu.measurement_ndim == 3
+
+        assert ptu.is_image
+        assert ptu.is_t3
+
+        assert ptu.shape == (3, 512, 512, 2, 501)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (2, 3)
+        assert_array_equal(ptu.coords['C'], (2, 3))
+        # TODO: verify coords
+
+        assert ptu.frame_change_mask == 4
+        assert ptu.line_start_mask == 1
+        assert ptu.line_stop_mask == 2
+
+        assert ptu.acquisition_time == 47.26384024428878
+        assert ptu.frame_time == 15.754613414762927
+        assert ptu.frequency == 24999920.0
+        assert ptu.global_frame_time == 393864075
+        assert ptu.global_line_time == 384000
+        assert ptu.global_pixel_time == 750
+        assert ptu.global_resolution == 4.00001280004096e-08
+        assert ptu.line_time == 0.015360049152157287
+        assert ptu.lines_in_frame == 512
+        assert ptu.number_bins == 501
+        assert ptu.number_bins_in_period == 500
+        assert ptu.number_bins_max == 32768
+        assert ptu.number_channels == 2
+        assert ptu.number_channels_max == 64
+        assert ptu.number_lines == 1536
+        assert ptu.number_markers == 3074
+        assert ptu.number_photons == 41039565
+        assert ptu.number_records == 42196537
+        assert ptu.pixel_time == 3.0000096000307202e-05
+        assert ptu.pixels_in_frame == 262144
+        assert ptu.pixels_in_line == 512
+        assert ptu.syncrate == 24999920
+        assert ptu.tcspc_resolution == 7.999999968033578e-11
+
+        histogram = ptu.decode_histogram(asxarray=True)
+        assert histogram.shape == (2, 501)
+        assert_array_equal(histogram.coords['C'], (2, 3))
+        assert_array_equal(histogram[1].coords['C'], (3,))
+
+        histogram = ptu.decode_histogram(asxarray=True, dtime=0)
+        assert histogram.shape == (2, 500)
+
+        histogram = ptu.decode_histogram(asxarray=True, dtime=100)
+        assert histogram.shape == (2, 100)
+
+        image = ptu.decode_image(asxarray=True, dtime=-1)
+        assert_array_equal(image.coords['C'], (2, 3))
+        assert_array_equal(image[..., 1, :].coords['C'], (3,))
+        assert_array_equal(ptu._coords_c, (2, 3))
+
+        image = ptu.decode_image(asxarray=True, channel=1, dtime=-1)
+        assert_array_equal(image.coords['C'], (3,))
+
+        image = ptu.decode_image(
+            asxarray=True, channel=1, dtime=-1, keepdims=False
+        )
+        assert 'C' not in image.coords
+
+    with PtuFile(fname, trimdims='') as ptu:
+        str(ptu)
+        assert ptu.shape == (3, 512, 512, 64, 32768)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert_array_equal(ptu.coords['C'][[0, -1]], (0, 63))
+        assert_array_equal(ptu._coords_c[[0, -1]], (0, 63))
+
+        image = ptu.decode_image(asxarray=True, dtime=-1, channel=2)
+        assert_array_equal(image.coords['C'], (2,))
+
+
 def test_ptu_t3_sinusoidal():
     """Test decode T3 image with sinusoidal correction."""
     fname = HERE / 'tttrlib/5kDa_1st_1_1_1.ptu'
@@ -348,7 +438,8 @@ def test_ptu_t3_sinusoidal():
 
         assert ptu.shape == (122, 512, 512, 1, 3216)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0,)
         # TODO: verify coords
 
         assert ptu.frame_change_mask == 4
@@ -417,7 +508,8 @@ def test_ptu_t3_point():
 
         assert ptu.shape == (287, 2, 1564)
         assert ptu.dims == ('T', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'C', 'H')
+        assert ptu.active_channels == (0, 1)
         # TODO: verify coords
 
         assert ptu.frame_change_mask == 0
@@ -577,7 +669,7 @@ def test_ptu_getitem():
         assert ptu.use_xarray
         im = ptu[11:66:3, ..., 1:2, ::-1]
         assert isinstance(im, xarray.DataArray)
-        assert tuple(im.coords.keys()) == ('T', 'Y', 'X')
+        assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'C')
         assert im.coords['T'].values[0] == 20.62217778751141
         # sum all
         ptu.dtype = 'uint64'
@@ -617,7 +709,8 @@ def test_issue_falcon_point():
 
         assert ptu.shape == (3, 1, 269)
         assert ptu.dims == ('T', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'C', 'H')
+        assert ptu.active_channels == (0,)
         # TODO: verify coords
 
         assert ptu._info.skip_first_frame == 0
@@ -671,7 +764,8 @@ def test_issue_skip_frame():
 
         assert ptu.shape == (100, 512, 512, 2, 4096)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0, 1)
         # TODO: verify coords
 
         assert ptu._info.skip_first_frame == 0
@@ -730,7 +824,8 @@ def test_issue_marker_order():
 
         assert ptu.shape == (191, 512, 512, 3, 3126)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'C', 'H')
+        assert ptu.active_channels == (0, 1, 2)
         # TODO: verify coords
 
         assert ptu._info.skip_first_frame == 0
@@ -798,8 +893,9 @@ def test_issue_empty_line():
 
         assert ptu.shape == (1, 256, 256, 1, 133)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
         assert ptu.coords['H'][1] == 9.696969697e-11  # 97 ps
+        assert ptu.active_channels == (0,)
 
         assert ptu._info.skip_first_frame == 0
         assert ptu._info.skip_last_frame == 0
@@ -839,7 +935,8 @@ def test_issue_pixeltime_zero():
 
         assert ptu.shape == (10, 512, 512, 2, 2510)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0, 1)
         # TODO: verify coords
 
         assert ptu._info.skip_first_frame == 1
@@ -939,7 +1036,7 @@ def test_issue_dtime(dtime, size):
     assert im.dtype == numpy.uint8
     assert im.shape == (1, 256, 256, 1, size)
     assert im.dims == ('T', 'Y', 'X', 'C', 'H')
-    assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'H')
+    assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
 
 
 def test_imread():
@@ -957,14 +1054,14 @@ def test_imread():
     assert im.dtype == numpy.uint8
     assert im.shape == (1, 256, 256, 1, 132)
     assert im.dims == ('T', 'Y', 'X', 'C', 'H')
-    assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'H')
+    assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
 
 
 @pytest.mark.parametrize('path', [f for f in HERE.iterdir() if f.is_dir()])
 def test_glob(path):
     """Test read all PicoQuant files."""
     for fname in glob.glob(str(path) + '/*.p*'):
-        if 'htmlcov' in fname:
+        if 'htmlcov' in fname or 'url in fname':
             continue
         if fname[-3:] in {'.py', 'pyc', 'pt2', 'pt3', 'pdf', 'phd'}:
             continue
