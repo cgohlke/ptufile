@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.9.14
+:Version: 2024.10.10
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -60,16 +60,21 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.5, 3.13.0rc2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.1.1
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.1.2
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.9.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.8.30 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.0 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.9.20 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.1 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.10.10
+
+- Also trim leading channels without photons (breaking).
+- Add property to identify channels with photons.
 
 2024.9.14
 
@@ -144,7 +149,7 @@ The PicoQuant unified file formats are documented at the
 
 The following features are currently not implemented: PT2 and PT3 files,
 decoding images from T2 formats, bidirectional scanning, and deprecated
-image reconstruction.
+image reconstruction. Line-scanning is not tested.
 
 Other Python or C/C++ modules for reading PicoQuant files are:
 
@@ -213,6 +218,8 @@ Get information about the FLIM image histogram in the PTU file:
 {'T': ..., 'Y': ..., 'X': ..., 'H': ...}
 >>> ptu.dtype
 dtype('uint16')
+>>> ptu.active_channels
+(0, 1)
 
 Decode parts of the image histogram to ``numpy.ndarray`` using slice notation.
 Slice step sizes define binning, -1 being used to integrate along axis:
@@ -234,8 +241,8 @@ Coordinates:
   * T        (T) float64... 0.05625
   * Y        (Y) float64... -0.0001304 ... 0.0001294
   * X        (X) float64... -0.0001304 ... 0.0001294
+  * C        (C) uint8... 0
   * H        (H) float64... 0.0
-Dimensions without coordinates: C
 Attributes...
     frequency:      19999200.0
 ...
@@ -249,9 +256,10 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.9.14'
+__version__ = '2024.10.10'
 
 __all__ = [
+    '__version__',
     'imread',
     'logger',
     'PqFile',
@@ -1083,9 +1091,9 @@ class PtuFile(PqFile):
             Axes to trim. The default is ``'TCH'``:
 
             - ``'T'``: remove incomplete first or last frame.
-            - ``'C'``: remove trailing channels not containing photons.
+            - ``'C'``: remove leading and trailing channels without photons.
               Else use record type's default :py:attr:`number_channels_max`.
-            - ``'H'``: remove trailing delay-time bins not containing photons.
+            - ``'H'``: remove trailing delay-time bins without photons.
               Else use record type's default :py:attr:`number_bins_max`.
 
     Raises:
@@ -1220,10 +1228,22 @@ class PtuFile(PqFile):
 
     @property
     def number_channels(self) -> int:
-        """Highest channel number with photons."""
-        # TODO: only use channels with photons
-        # len(ch for ch in self.tags['HWInpChan_Enabled'] if ch) ?
-        return self._info.channels_used
+        """Number of channels, without leading and trailing empty channels."""
+        return (
+            1
+            + self._info.channels_active_last
+            - self._info.channels_active_first
+        )
+
+    @property
+    def active_channels(self) -> tuple[int, ...]:
+        """Indices of un-trimmed channels containing photons."""
+        channels_active = self._info.channels_active
+        return tuple(
+            ch
+            for ch in range(self._info.channels)
+            if channels_active & (1 << ch)
+        )
 
     @property
     def number_bins_max(self) -> int:
@@ -1498,6 +1518,28 @@ class PtuFile(PqFile):
         """Number of dimensions in image histogram array."""
         return len(self.dims)
 
+    @property
+    def _coords_c(self) -> NDArray[Any]:
+        """Coordinate array labelling all channels."""
+        if 'C' in self._trimdims:
+            return numpy.arange(
+                self._info.channels_active_first,
+                self._info.channels_active_last + 1,
+                dtype=numpy.uint8,
+            )
+        return numpy.arange(self._info.channels, dtype=numpy.uint8)
+
+    @property
+    def _coords_h(self) -> NDArray[Any]:
+        """Coordinate array labelling all delay-time bins."""
+        if 'H' in self._trimdims:
+            nbins = self.number_bins
+        else:
+            nbins = self.number_bins_max
+        return numpy.linspace(  # type: ignore[no-any-return]
+            0, nbins * self.tags['MeasDesc_Resolution'], nbins, endpoint=False
+        )
+
     @cached_property
     def coords(self) -> dict[str, NDArray[Any]]:
         """Coordinate arrays labelling each point in image histogram array.
@@ -1528,12 +1570,8 @@ class PtuFile(PqFile):
                 coords['X'] = numpy.linspace(
                     offset, offset + shape[-3] * res, shape[-3], endpoint=False
                 )
-        coords['H'] = numpy.linspace(
-            0,
-            shape[-1] * self.tags['MeasDesc_Resolution'],
-            shape[-1],
-            endpoint=False,
-        )
+        coords['C'] = self._coords_c
+        coords['H'] = self._coords_h
         return coords
 
     @cached_property
@@ -1735,6 +1773,11 @@ class PtuFile(PqFile):
             records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
 
+        if 'C' in self._trimdims:
+            first_channel = self._info.channels_active_first
+        else:
+            first_channel = 0
+
         if self.is_t3:
             if dtime is None:
                 nbins = self.shape[-1]
@@ -1745,7 +1788,7 @@ class PtuFile(PqFile):
             else:
                 raise ValueError(f'{dtime=} < 0')
             histogram = create_output(out, (self.shape[-2], nbins), dtype)
-            decode_t3_histogram(histogram, records, rectype)
+            decode_t3_histogram(histogram, records, rectype, first_channel)
             coords = numpy.linspace(
                 0,
                 histogram.shape[-1] * self.tags['MeasDesc_Resolution'],
@@ -1764,10 +1807,7 @@ class PtuFile(PqFile):
                 dtype,
             )
             decode_t2_histogram(
-                histogram,
-                records,
-                rectype,
-                sampling_time,
+                histogram, records, rectype, sampling_time, first_channel
             )
             coords = numpy.linspace(
                 0, self.acquisition_time, histogram.shape[1], endpoint=False
@@ -1780,7 +1820,7 @@ class PtuFile(PqFile):
         return DataArray(
             histogram,
             dims=('C', 'H'),
-            coords={'H': coords},  # name=self.name
+            coords={'C': self._coords_c, 'H': coords},  # name=self.name
         )
 
     @overload
@@ -2023,6 +2063,10 @@ class PtuFile(PqFile):
                     f'axis {i} index type {type(index)!r} invalid'
                 )
 
+        if self._info.channels_active_first > 0 and 'C' in self._trimdims:
+            # set channel offset
+            start[-2] += self._info.channels_active_first
+
         if self.tags.get('ImgHdr_SinCorrection', 0) > 0:
             pixel_time = 0
             pixel_at_time = sinusoidal_correction(
@@ -2096,6 +2140,10 @@ class PtuFile(PqFile):
             return histogram
 
         from xarray import DataArray
+
+        if self._info.channels_active_first > 0 and 'C' in self._trimdims:
+            # unset channel offset
+            start[-2] -= self._info.channels_active_first
 
         dims = []
         coords = self.coords.copy()
@@ -2209,8 +2257,11 @@ class PtuFile(PqFile):
             t.print('decode_histogram')
             print()
             print(histogram)
+        channels = histogram.coords['C'].values
         for i, hist in enumerate(histogram):
-            pyplot.plot(hist.coords['H'], hist.values, label=f'ch {i}')
+            pyplot.plot(
+                hist.coords['H'], hist.values, label=f'ch {channels[i]}'
+            )
         if 0.0 < self.frequency:
             pyplot.axvline(x=1 / self.frequency, color='0.5', ls=':', lw=0.75)
         pyplot.title(repr(self))
@@ -2250,8 +2301,14 @@ class PtuInfo:
     channels: int
     """Maximum number of channels for record type."""
 
-    channels_used: int
-    """Highest channel number with photons."""
+    channels_active: int
+    """Bitfield identifying channels with photons."""
+
+    channels_active_first: int
+    """First channel with photons."""
+
+    channels_active_last: int
+    """Last channel with photons."""
 
     bins: int
     """Maximum delay time for record type."""
