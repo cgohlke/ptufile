@@ -32,7 +32,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.10.10
+:Version: 2024.11.26
 
 """
 
@@ -174,7 +174,7 @@ def test_pqres(caplog):
 def test_ptu(filetype):
     """Test read PTU file."""
     fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
-    if filetype != str:
+    if filetype is not str:
         fname = open(fname, 'rb')
     try:
         with PtuFile(fname) as ptu:
@@ -186,7 +186,7 @@ def test_ptu(filetype):
             assert ptu.scanner == PtuScannerType.LSM
             assert ptu.measurement_ndim == 3
             assert ptu.filename == (
-                os.fspath(fname) if filetype == str else ''
+                os.fspath(fname) if filetype is str else ''
             )
             assert ptu.version == '00.0.1'
             assert str(ptu.guid) == '4f6e5f68-8289-483d-9d9a-7974b77ef8b8'
@@ -195,7 +195,7 @@ def test_ptu(filetype):
             assert not ptu.tags['HW_ExternalRefClock']
             # decoding of records is tested separately
     finally:
-        if filetype != str:
+        if filetype is not str:
             fname.close()
 
 
@@ -203,7 +203,7 @@ def test_ptu(filetype):
 def test_phu(filetype):
     """Test read PHU file."""
     fname = HERE / 'TimeHarp/Decay_Coumarin_6.phu'
-    if filetype != str:
+    if filetype is not str:
         fname = open(fname, 'rb')
     try:
         with PhuFile(fname) as phu:
@@ -229,7 +229,7 @@ def test_phu(filetype):
             phu.plot(show=False, verbose=False)
             phu.plot(show=False, verbose=True)
     finally:
-        if filetype != str:
+        if filetype is not str:
             fname.close()
 
 
@@ -431,8 +431,10 @@ def test_ptu_t3_sinusoidal():
         assert ptu.scanner == PtuScannerType.LSM
         assert ptu.measurement_ndim == 3
 
-        assert ptu.is_image
         assert ptu.is_t3
+        assert ptu.is_image
+        assert ptu.is_sinusoidal
+        assert not ptu.is_bidirectional
 
         assert ptu.tags['ImgHdr_SinCorrection'] == 80
 
@@ -454,9 +456,6 @@ def test_ptu_t3_sinusoidal():
         assert ptu.global_line_time == 18994
         assert ptu.global_pixel_time == 37
         assert ptu.global_resolution == 2.5708051144625268e-08
-        assert not ptu.is_bidirectional
-        assert ptu.is_image
-        assert ptu.is_t3
         assert ptu.line_time == 0.0004882987234410124
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3216
@@ -484,6 +483,91 @@ def test_ptu_t3_sinusoidal():
         assert im[399, 18] == 37
 
 
+def test_ptu_t3_bidirectional():
+    """Test decode T3 image with acquired with bidirectional scanning."""
+    fname = HERE / 'fastFLIM/A2_Shep2_26.ptu'
+    with PtuFile(fname) as ptu:
+        str(ptu)
+        assert ptu.version == '1.0.00'
+        # assert ptu._data_offset == 4616
+        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PtuRecordType.GenericT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.FLIMBEE
+        assert ptu.measurement_ndim == 3
+
+        assert ptu.is_t3
+        assert ptu.is_image
+        assert ptu.is_bidirectional
+        assert not ptu.is_sinusoidal
+
+        assert ptu.tags['ImgHdr_BiDirect']
+
+        assert ptu.shape == (1, 1024, 1024, 2, 502)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0, 1)
+        # TODO: verify coords
+
+        assert ptu.frame_change_mask == 4
+        assert ptu.line_start_mask == 1
+        assert ptu.line_stop_mask == 2
+
+        assert ptu.acquisition_time == 192.27363031561703
+        assert ptu.frame_time == 192.27363031561703
+        assert ptu.frequency == 24999920.0
+        assert ptu.global_acquisition_time == 4806825376
+        assert ptu.global_frame_time == 4806825376
+        assert ptu.global_line_time == 3200000
+        assert ptu.global_pixel_time == 3125
+        assert ptu.global_resolution == 4.00001280004096e-08
+        assert ptu.line_time == 0.12800040960131073
+        assert ptu.lines_in_frame == 1024
+        assert ptu.number_bins == 502
+        assert ptu.number_bins_in_period == 500
+        assert ptu.number_bins_max == 32768
+        assert ptu.number_channels == 2
+        assert ptu.number_channels_max == 64
+        assert ptu.number_images == 1
+        assert ptu.number_lines == 1024
+        assert ptu.number_markers == 2049
+        assert ptu.number_photons == 239232451
+        assert ptu.number_records == 242488255
+        assert ptu.pixel_time == 0.00012500040000128
+        assert ptu.pixels_in_frame == 1048576
+        assert ptu.pixels_in_line == 1024
+        assert ptu.syncrate == 24999920
+        assert ptu.tcspc_resolution == 7.999999968033578e-11
+
+        records = ptu.read_records()
+        assert len(records) == ptu.number_records
+        im = ptu.decode_image(
+            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
+        )
+        assert im.shape == (1024, 1024)
+        assert im[430, 430] == 1057  # even line
+        assert im[431, 431] == 1050  # odd line
+
+        # selection
+        m, n = 421, 440
+        selection = (0, slice(m, n), slice(m, n), 0, slice(None, None, -1))
+        im1 = ptu.decode_image(selection, records=records, keepdims=False)
+        assert_array_equal(im[m:n, m:n], im1)
+
+        # x-shift by one pixel
+        im = ptu.decode_image(
+            records=records,
+            frame=-1,
+            dtime=-1,
+            channel=0,
+            bishift=-ptu.global_pixel_time,
+            keepdims=False,
+        )
+        assert im[430, 430] == 1057  # even line is same
+        assert im[431, 430] == 1050  # odd line shifted
+
+
 @pytest.mark.skip('no test file available')
 def test_ptu_t3_line():
     """Test decode T3 line scan."""
@@ -504,6 +588,8 @@ def test_ptu_t3_point():
         assert ptu.measurement_ndim == 1
 
         assert not ptu.is_image
+        assert not ptu.is_bidirectional
+        assert not ptu.is_sinusoidal
         assert ptu.is_t3
 
         assert ptu.shape == (287, 2, 1564)
