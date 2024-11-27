@@ -38,7 +38,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.10.10
+:Version: 2024.11.26
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -61,15 +61,20 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.1.2
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.9.0 (recommended)
+- `NumPy <https://pypi.org/project/numpy>`_ 2.1.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2024.11.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.9.20 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.13.1 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.14.1 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.11.26
+
+- Support bi-directional scanning (FLIMbee scanner).
+- Drop support for Python 3.9.
 
 2024.10.10
 
@@ -136,10 +141,6 @@ Revisions
 Notes
 -----
 
-The `Chan Zuckerberg Initiative
-<https://chanzuckerberg.com/eoss/proposals/phasorpy-a-python-library-for-phasor-analysis-of-flim-and-spectral-imaging>`_
-financially supported the development of this library.
-
 `PicoQuant GmbH <https://www.picoquant.com/>`_ is a manufacturer of photonic
 components and instruments.
 
@@ -148,15 +149,18 @@ The PicoQuant unified file formats are documented at the
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
 The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, bidirectional scanning, and deprecated
-image reconstruction. Line-scanning is not tested.
+decoding images from T2 formats, bidirectional sinusoidal scanning, and
+deprecated image reconstruction. Line-scanning is not tested.
 
-Other Python or C/C++ modules for reading PicoQuant files are:
+Other modules for reading or writing PicoQuant files are:
 
 - `Read_PTU.py
   <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_
 - `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_
+- `fastFLIM <https://github.com/RobertMolenaar-UT/fastFLIM>`_
 - `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_
+- `PTU_Reader <https://github.com/UU-cellbiology/PTU_Reader>`_
+- `PTU_Writer <https://github.com/ekatrukha/PTU_Writer>`_
 - `FlimReader <https://github.com/flimfit/FlimReader>`_
 - `tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_
 - `picoquantio <https://github.com/tsbischof/picoquantio>`_
@@ -256,7 +260,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.10.10'
+__version__ = '2024.11.26'
 
 __all__ = [
     '__version__',
@@ -315,6 +319,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
     asxarray: Literal[False] = ...,
@@ -332,6 +337,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
     asxarray: Literal[True] = ...,
@@ -349,6 +355,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
     asxarray: bool = False,
@@ -365,6 +372,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
     asxarray: bool = False,
@@ -375,7 +383,8 @@ def imread(
     Parameters:
         file:
             File name or seekable binary stream.
-        selection, dtype, channel, frame, dtime, keepdims, asxarray, out:
+        selection, dtype, channel, frame, dtime, bishift, keepdims, asxarray,\
+        out:
             Passed to :py:meth:`PtuFile.decode_image`.
         trimdims:
             Passed to :py:class:`PtuFile`.
@@ -388,6 +397,7 @@ def imread(
             channel=channel,
             frame=frame,
             dtime=dtime,
+            bishift=bishift,
             keepdims=keepdims,
             asxarray=asxarray,
             out=out,
@@ -1288,6 +1298,7 @@ class PtuFile(PqFile):
         """Global time per pixel.
 
         Multiply with global resolution to get time in s.
+
         """
         if self.tags.get('ImgHdr_TimePerPixel', 0.0) > 0.0:
             pixeltime = (
@@ -1322,6 +1333,7 @@ class PtuFile(PqFile):
         """Global time per image, line, or point scan cycle, excluding retrace.
 
         Multiply with global resolution to get time in s.
+
         """
         if self.tags['Measurement_SubMode'] == 3:
             # image, including retrace
@@ -1424,7 +1436,7 @@ class PtuFile(PqFile):
         return (
             self.tags['Measurement_SubMode'] == 3
             and self.tags.get('ImgHdr_Dimensions', 1) == 3
-            and 'ImgHdr_PixX' in self.tags
+            and 'ImgHdr_PixX' in self.tags  # some Leica PTU are missing this
         )
 
     @property
@@ -1439,7 +1451,12 @@ class PtuFile(PqFile):
     @property
     def is_bidirectional(self) -> bool:
         """Bidirectional scan mode."""
-        return bool(self.tags.get('ImgHdr_BiDirect', False))
+        return bool(self.tags.get('ImgHdr_BiDirect', 0) > 0)
+
+    @property
+    def is_sinusoidal(self) -> bool:
+        """Sinusoidal scan mode."""
+        return bool(self.tags.get('ImgHdr_SinCorrection', 0) != 0)
 
     @property
     def use_xarray(self) -> bool:
@@ -1834,6 +1851,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        bishift: int | None = None,
         keepdims: bool = True,
         asxarray: Literal[False] = ...,
         out: OutputType = None,
@@ -1850,6 +1868,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        bishift: int | None = None,
         keepdims: bool = True,
         asxarray: Literal[True] = ...,
         out: OutputType = None,
@@ -1866,6 +1885,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        bishift: int | None = None,
         keepdims: bool = True,
         asxarray: bool = ...,
         out: OutputType = None,
@@ -1881,6 +1901,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        bishift: int | None = None,
         keepdims: bool = True,
         asxarray: bool = False,
         out: OutputType = None,
@@ -1919,6 +1940,11 @@ class PtuFile(PqFile):
                 If < 0, integrate delay time axis.
                 If > 0, return up to specified bin.
                 Overrides ``selection`` for axis ``H``.
+            bishift:
+                Global time shift of odd vs. even lines in bidirectional mode.
+                The default is zero.
+                Positive shifts invalidate left odd columns, while
+                negative shifts invalidate right odd columns.
             keepdims:
                 If true (default), reduced axes are left as size-one dimension.
             asxarray:
@@ -1946,8 +1972,8 @@ class PtuFile(PqFile):
 
         Raises:
             NotImplementedError:
-                T2 images, bidirectional scanning, and deprecated image
-                reconstruction are not supported.
+                T2 images, bidirectional sinusoidal scanning, and deprecated
+                image reconstruction are not supported.
             IndexError:
                 Selection is out of bounds.
 
@@ -1955,9 +1981,15 @@ class PtuFile(PqFile):
         if not self.is_t3:
             # TODO: T2 images
             raise NotImplementedError('not a T3 image')
-        if self.tags.get('ImgHdr_BiDirect', 0) > 0:
-            # TODO: bidirectional scanning
-            raise NotImplementedError('bidirectional scanning')
+        if self.is_bidirectional:
+            if not self.is_image:
+                raise NotImplementedError(
+                    'bidirectional scanning only supported for images'
+                )
+            if self.is_sinusoidal:
+                raise NotImplementedError(
+                    'bidirectional sinusoidal scanning not supported'
+                )
         if self.is_image and 'ImgHdr_LineStart' not in self.tags:
             # TODO: deprecated image reconstruction using
             #   ImgHdr_PixResol, ImgHdr_TStartTo, ImgHdr_TStopTo,
@@ -2067,7 +2099,7 @@ class PtuFile(PqFile):
             # set channel offset
             start[-2] += self._info.channels_active_first
 
-        if self.tags.get('ImgHdr_SinCorrection', 0) > 0:
+        if self.is_sinusoidal:
             pixel_time = 0
             pixel_at_time = sinusoidal_correction(
                 self.tags['ImgHdr_SinCorrection'],
@@ -2108,6 +2140,8 @@ class PtuFile(PqFile):
                 *start,
                 *step,
                 self._info.skip_first_frame,
+                self.pixels_in_line if self.is_bidirectional else 0,
+                0 if bishift is None else bishift,
             )
         elif ndim == 4:
             # not tested
@@ -2222,7 +2256,7 @@ class PtuFile(PqFile):
 
         t = Timer()
         if self.is_t3:
-            if self.measurement_ndim > 1 and not self.is_bidirectional:
+            if self.measurement_ndim > 1:
                 t.start()
                 histogram: Any = self.decode_image(
                     frame=frame, channel=channel, dtime=dtime, asxarray=True
