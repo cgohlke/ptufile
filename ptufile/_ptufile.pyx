@@ -482,7 +482,9 @@ def decode_t3_image(
     const ssize_t binc = 1,
     const ssize_t binh = 1,
     # const bint wraparound = 0,
-    const bint skip_first_frame = 0
+    const bint skip_first_frame = 0,
+    const ssize_t biwidth = 0,  # pixels_in_line
+    const ssize_t bishift = 0,
 ):
     """Return TCSPC histogram from TTTR T3 records of image measurement."""
     cdef:
@@ -493,7 +495,7 @@ def decode_t3_image(
         uint64_t overflow, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_
+        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
         decode_func_t decode_func
 
     if pixel_time == 0 and global_line_time == 0:
@@ -524,6 +526,8 @@ def decode_t3_image(
     stopx = startx + sizex * binx
     stopc = startc + sizec * binc
     stoph = starth + sizeh * binh
+
+    bdiv = starty % 2
 
     with nogil:
         time_line_start = 0
@@ -559,13 +563,21 @@ def decode_t3_image(
                     continue
 
                 if pixel_time > 0:
-                    ix = (time_global - time_line_start) // pixel_time
+                    if biwidth and iy_binned % 2 != bdiv:
+                        # line backward scan
+                        # bishift < (time_global - time_line_start)
+                        ix = biwidth - 1 - (
+                            (time_global - time_line_start) - bishift
+                        ) // pixel_time
+                    else:
+                        ix = (time_global - time_line_start) // pixel_time
                 else:
                     ix = time_global - time_line_start
                     if ix < global_line_time:
                         ix = <ssize_t> pixel_at_time[ix]
                     else:
                         ix = stopx
+                    # TODO: support bidirectional, sinusoidal scanning
 
                 if ix >= startx and ix < stopx:
                     # idtime_binned = (idtime - starth) // binh
