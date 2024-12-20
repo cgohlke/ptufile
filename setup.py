@@ -6,8 +6,10 @@ import os
 import re
 import sys
 
+import numpy
 from setuptools import Extension, setup
-from setuptools.command.build_ext import build_ext as _build_ext
+
+buildnumber = ''
 
 DEBUG = bool(os.environ.get('PTUFILE_DEBUG', False))
 
@@ -42,6 +44,7 @@ with open('ptufile/ptufile.py', encoding='utf-8') as fh:
     code = fh.read()
 
 version = search(r"__version__ = '(.*?)'", code).replace('.x.x', '.dev0')
+version += ('.' + buildnumber) if buildnumber else ''
 
 description = search(r'"""(.*)\.(?:\r\n|\r|\n)', code)
 
@@ -71,20 +74,19 @@ if 'sdist' in sys.argv:
         fh.write('BSD 3-Clause License\n\n')
         fh.write(license)
 
+    revisions = search(
+        r'(?:\r\n|\r|\n){2}(Revisions.*)- …',
+        readme,
+        re.MULTILINE | re.DOTALL,
+    ).strip()
 
-class build_ext(_build_ext):
-    """Delay import numpy until build."""
+    with open('CHANGES.rst', encoding='utf-8') as fh:
+        old = fh.read()
 
-    def finalize_options(self):
-        _build_ext.finalize_options(self)
-        if isinstance(__builtins__, dict):
-            __builtins__['__NUMPY_SETUP__'] = False
-        else:
-            setattr(__builtins__, '__NUMPY_SETUP__', False)
-        import numpy
-
-        self.include_dirs.append(numpy.get_include())
-
+    old = old.split(revisions.splitlines()[-1])[-1]
+    with open('CHANGES.rst', 'w', encoding='utf-8') as fh:
+        fh.write(revisions.strip())
+        fh.write(old)
 
 ext_modules = [
     Extension(
@@ -98,6 +100,7 @@ ext_modules = [
         ],
         extra_compile_args=['/Zi', '/Od'] if DEBUG else [],
         extra_link_args=['-debug:full'] if DEBUG else [],
+        include_dirs=[numpy.get_include()],
     )
 ]
 
@@ -124,7 +127,6 @@ setup(
     setup_requires=['setuptools', 'numpy'],
     extras_require={'all': ['xarray', 'tifffile', 'matplotlib']},
     ext_modules=ext_modules,
-    cmdclass={'build_ext': build_ext},
     zip_safe=False,
     platforms=['any'],
     classifiers=[
