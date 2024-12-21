@@ -466,7 +466,8 @@ def decode_t3_image(
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
-    const uint64_t pixel_time,  # average global time spent in pixel
+    const ssize_t pixel_time,  # average global time spent in pixel
+    const ssize_t line_time,  # global time spent in one line
     const uint16_t[::1] pixel_at_time,  # global time in line to pixel index
     const uint32_t line_start,  # mask
     const uint32_t line_stop,  # mask
@@ -481,25 +482,24 @@ def decode_t3_image(
     const ssize_t binx = 1,
     const ssize_t binc = 1,
     const ssize_t binh = 1,
-    # const bint wraparound = 0,
-    const bint skip_first_frame = 0,
-    const ssize_t biwidth = 0,  # pixels_in_line
     const ssize_t bishift = 0,
+    const bint bidirectional = False,
+    const bint sinusoidal = False,
+    const bint skip_first_frame = 0,
 ):
     """Return TCSPC histogram from TTTR T3 records of image measurement."""
     cdef:
         ssize_t sizec, sizet, sizey, sizex, sizeh
         ssize_t stopc, stopt, stopy, stopx, stoph
         ssize_t nrecords = records.size
-        ssize_t global_line_time = pixel_at_time.size
+        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
         uint64_t overflow, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
         decode_func_t decode_func
 
-    if pixel_time == 0 and global_line_time == 0:
-        raise ValueError(f'invalid {pixel_time=}')
+    if sinusoidal and pixel_at_time.size != line_time:
+        raise ValueError(f'invalid {pixel_at_time.size=} != {line_time=}')
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
@@ -526,8 +526,7 @@ def decode_t3_image(
     stopx = startx + sizex * binx
     stopc = startc + sizec * binc
     stoph = starth + sizeh * binh
-
-    bdiv = starty % 2
+    bidiv = starty % 2
 
     with nogil:
         time_line_start = 0
@@ -562,22 +561,19 @@ def decode_t3_image(
                 ):
                     continue
 
-                if pixel_time > 0:
-                    if biwidth and iy_binned % 2 != bdiv:
-                        # line backward scan
-                        # bishift < (time_global - time_line_start)
-                        ix = biwidth - 1 - (
-                            (time_global - time_line_start) - bishift
-                        ) // pixel_time
-                    else:
-                        ix = (time_global - time_line_start) // pixel_time
+                ix = <ssize_t> (time_global - time_line_start)
+
+                if bidirectional and iy_binned % 2 != bidiv:
+                    # line backward scan
+                    # TODO: is bishift correct for sinusoidal scanning?
+                    ix = line_time - 1 - ix + bishift
+
+                if ix < 0 or ix >= line_time:
+                    ix = stopx
+                elif sinusoidal:
+                    ix = <ssize_t> pixel_at_time[ix]
                 else:
-                    ix = time_global - time_line_start
-                    if ix < global_line_time:
-                        ix = <ssize_t> pixel_at_time[ix]
-                    else:
-                        ix = stopx
-                    # TODO: support bidirectional, sinusoidal scanning
+                    ix = ix // pixel_time
 
                 if ix >= startx and ix < stopx:
                     # idtime_binned = (idtime - starth) // binh
