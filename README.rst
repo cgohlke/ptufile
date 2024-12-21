@@ -11,7 +11,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.11.26
+:Version: 2024.12.20
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -33,16 +33,20 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.7, 3.13.0 64-bit
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1 64-bit
 - `NumPy <https://pypi.org/project/numpy>`_ 2.1.3
 - `Xarray <https://pypi.org/project/xarray>`_ 2024.11.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.9.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.9.20 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.12.12 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.14.1 (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.12.20
+
+- Support bi-directional sinusoidal scanning (WIP).
 
 2024.11.26
 
@@ -79,37 +83,9 @@ Revisions
 
 2024.2.15
 
-- Add PtuFile.scanner property.
-- Add numcodecs compatible PTU codec.
+- …
 
-2024.2.8
-
-- Support sinusoidal scanning correction.
-
-2024.2.2
-
-- Change positive dtime parameter from index to size (breaking).
-- Fix segfault with ImgHdr_TimePerPixel = 0.
-- Rename MultiHarp to Generic conforming with changes in PicoQuant reference.
-
-2023.11.16
-
-- Fix empty line when first record is start marker.
-
-2023.11.13
-
-- Change image histogram dimension order to TYXCH (breaking).
-- Change frame start to start of first line in frame (breaking).
-- Improve trimming of incomplete frames (breaking).
-- Remove trim_dtime option (breaking).
-- Fix selection handling in PtuFile.decode_image.
-- Add option to trim T, C, and H axes of image histograms.
-- Add option to decode histograms to memory-mapped or user-provided arrays.
-- Add ``__getitem__`` interface to image histogram.
-
-2023.11.1
-
-- Initial alpha release.
+Refer to the CHANGES file for older revisions.
 
 Notes
 -----
@@ -122,28 +98,28 @@ The PicoQuant unified file formats are documented at the
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
 The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, bidirectional sinusoidal scanning, and
-deprecated image reconstruction. Line-scanning is not tested.
+decoding images from T2 formats, and deprecated image reconstruction.
+Line, bidirectional, and sinusoidal scanning are limited tested.
 
-Other modules for reading or writing PicoQuant files are:
-
-- `Read_PTU.py
-  <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_
-- `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_
-- `fastFLIM <https://github.com/RobertMolenaar-UT/fastFLIM>`_
-- `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_
-- `PTU_Reader <https://github.com/UU-cellbiology/PTU_Reader>`_
-- `PTU_Writer <https://github.com/ekatrukha/PTU_Writer>`_
-- `FlimReader <https://github.com/flimfit/FlimReader>`_
-- `tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_
-- `picoquantio <https://github.com/tsbischof/picoquantio>`_
-- `ptuparser <https://pypi.org/project/ptuparser/>`_
-- `phconvert <https://github.com/Photon-HDF5/phconvert/>`_
-- `trattoria <https://pypi.org/project/trattoria/>`_
-  (wrapper of `trattoria-core <https://pypi.org/project/trattoria-core/>`_ and
-  `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_)
-- `napari-flim-phasor-plotter
-  <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_
+Other modules for reading or writing PicoQuant files are
+`Read_PTU.py
+<https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
+`readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
+`fastFLIM <https://github.com/RobertMolenaar-UT/fastFLIM>`_,
+`PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
+`PTU_Reader <https://github.com/UU-cellbiology/PTU_Reader>`_,
+`PTU_Writer <https://github.com/ekatrukha/PTU_Writer>`_,
+`FlimReader <https://github.com/flimfit/FlimReader>`_,
+`tangy <https://github.com/Peter-Barrow/tangy>`_,
+`tttrlib <https://github.com/Fluorescence-Tools/tttrlib>`_,
+`picoquantio <https://github.com/tsbischof/picoquantio>`_,
+`ptuparser <https://pypi.org/project/ptuparser/>`_,
+`phconvert <https://github.com/Photon-HDF5/phconvert/>`_,
+`trattoria <https://pypi.org/project/trattoria/>`_ (wrapper of
+`trattoria-core <https://pypi.org/project/trattoria-core/>`_,
+`tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_), and
+`napari-flim-phasor-plotter
+<https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
 Examples
 --------
