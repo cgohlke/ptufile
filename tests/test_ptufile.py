@@ -32,7 +32,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2024.11.26
+:Version: 2024.12.20
 
 """
 
@@ -484,7 +484,7 @@ def test_ptu_t3_sinusoidal():
 
 
 def test_ptu_t3_bidirectional():
-    """Test decode T3 image with acquired with bidirectional scanning."""
+    """Test decode T3 image acquired with bidirectional scanning."""
     fname = HERE / 'fastFLIM/A2_Shep2_26.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
@@ -546,6 +546,7 @@ def test_ptu_t3_bidirectional():
             records=records, frame=-1, dtime=-1, channel=0, keepdims=False
         )
         assert im.shape == (1024, 1024)
+        # TODO: compare to ground truth image from SymPhoTime
         assert im[430, 430] == 1057  # even line
         assert im[431, 431] == 1050  # odd line
 
@@ -566,6 +567,98 @@ def test_ptu_t3_bidirectional():
         )
         assert im[430, 430] == 1057  # even line is same
         assert im[431, 430] == 1050  # odd line shifted
+
+
+def test_ptu_t3_bidirectional_sinusoidal():
+    """Test decode T3 image acquired with bidirectional sinusoidal scanning."""
+    fname = HERE / 'tttr-data/imaging/leica/sp8/d0/G-28_S1_1_1.ptu'
+    with PtuFile(fname) as ptu:
+        str(ptu)
+        assert ptu.version == '1.0.00'
+        # assert ptu._data_offset == 5816
+        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PtuRecordType.PicoHarpT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.LSM
+        assert ptu.measurement_ndim == 3
+
+        assert ptu.is_t3
+        assert ptu.is_image
+        assert ptu.is_bidirectional
+        assert ptu.is_sinusoidal
+
+        assert ptu.tags['ImgHdr_BiDirect']
+
+        assert ptu.shape == (26, 512, 512, 1, 3212)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0,)
+        # TODO: verify coords
+
+        assert ptu.frame_change_mask == 4
+        assert ptu.line_start_mask == 1
+        assert ptu.line_stop_mask == 2
+
+        assert ptu.acquisition_time == 14.697189081520644
+        assert ptu.frame_time == 0.5652764873231677
+        assert ptu.frequency == 19459120.0
+        assert ptu.global_acquisition_time == 285994366
+        assert ptu.global_frame_time == 10999783
+        assert ptu.global_line_time == 9534
+        assert ptu.global_pixel_time == 19
+        assert ptu.global_resolution == 5.138978535514453e-08
+        assert ptu.line_time == 0.0004899502135759479
+        assert ptu.lines_in_frame == 512
+        assert ptu.number_bins == 3212
+        assert ptu.number_bins_in_period == 3211
+        assert ptu.number_bins_max == 4096
+        assert ptu.number_channels == 1
+        assert ptu.number_channels_max == 4
+        assert ptu.number_images == 26
+        assert ptu.number_lines == 13658
+        assert ptu.number_markers == 27341
+        assert ptu.number_photons == 5585391
+        assert ptu.number_records == 5617095
+        assert ptu.pixel_time == 9.764059217477461e-07
+        assert ptu.pixels_in_frame == 262144
+        assert ptu.pixels_in_line == 512
+        assert ptu.syncrate == 19459120
+        assert ptu.tcspc_resolution == 1.5999999936067155e-11
+
+        records = ptu.read_records()
+        assert len(records) == ptu.number_records
+        im = ptu.decode_image(
+            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
+        )
+        assert im.shape == (512, 512)
+        # TODO: compare to ground truth image from SymPhoTime
+        assert im[430, 430] == 38  # even line
+        assert im[431, 431] == 32  # odd line
+
+        # selection
+        m, n = 421, 440
+        selection = (
+            slice(None, None, -1),
+            slice(m, n),
+            slice(m, n),
+            0,
+            slice(None, None, -1),
+        )
+        im1 = ptu.decode_image(selection, records=records, keepdims=False)
+        assert_array_equal(im[m:n, m:n], im1)
+
+        # x-shift by one pixel
+        im = ptu.decode_image(
+            records=records,
+            frame=-1,
+            dtime=-1,
+            channel=0,
+            bishift=-ptu.global_pixel_time,
+            keepdims=False,
+        )
+        assert im[430, 430] == 38  # even line is same
+        assert im[431, 430] == 32  # odd line shifted
 
 
 @pytest.mark.skip('no test file available')
