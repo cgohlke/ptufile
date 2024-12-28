@@ -1,6 +1,6 @@
 # ptufile/numcodecs.py
 
-# Copyright (c) 2024, Christoph Gohlke
+# Copyright (c) 2024-2025, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
