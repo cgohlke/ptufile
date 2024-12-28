@@ -29,16 +29,20 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Read PicoQuant PTU and related files.
+"""Read and write PicoQuant PTU files.
 
-Ptufile is a Python library to read image and metadata from PicoQuant PTU
-and related files: PHU, PCK, PCO, PFS, PUS, and PQRES.
+Ptufile is a Python library to
+
+1. read data and metadata from PicoQuant PTU and related files
+   (PHU, PCK, PCO, PFS, PUS, and PQRES), and
+2. write TCSPC histograms to T3 image mode PTU files.
+
 PTU files contain time correlated single photon counting (TCSPC)
 measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.12.20
+:Version: 2024.12.28
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -66,10 +70,22 @@ This revision was tested with the following requirements and dependencies
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.12.12 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.14.1 (optional)
+- `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
+  (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
 
 Revisions
 ---------
+
+2024.12.28
+
+- Add imwrite function to encode TCSPC image histogram in T3 PTU format.
+- Add enums for more PTU tag values.
+- Add PqFile.datetime property.
+- Read TDateTime tag as datetime instead of struct_time (breaking).
+- Rename PtuFile.type property to record_type (breaking).
+- Fix reading PHU missing HistResDscr_HWBaseResolution tag.
+- Warn if tags are not 8-byte aligned in file.
 
 2024.12.20
 
@@ -124,9 +140,12 @@ The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
 
-The following features are currently not implemented: PT2 and PT3 files,
-decoding images from T2 formats, and deprecated image reconstruction.
-Line, bidirectional, and sinusoidal scanning are limited tested.
+The following features are currently not implemented due to the lack of
+test files or documentation: PT2 and PT3 files, decoding images from
+T2 formats, bidirectional per frame, and deprecated image reconstruction.
+
+Compatibility of written PTU files with other software is limitedly tested,
+as are decoding line, bidirectional, and sinusoidal scanning.
 
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
@@ -167,7 +186,7 @@ Read metadata from a PicoQuant PTU FLIM file:
 >>> ptu = PtuFile('tests/FLIM.ptu')
 >>> ptu.magic
 <PqFileMagic.PTU: ...>
->>> ptu.type
+>>> ptu.record_type
 <PtuRecordType.PicoHarpT3: 66307>
 >>> ptu.measurement_mode
 <PtuMeasurementMode.T3: 3>
@@ -210,7 +229,7 @@ array([[[103, ..., 38],
         [ 47, ..., 30]]], dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
-to a ``xarray.DataArray``, keeping reduced axes:
+into a ``xarray.DataArray``, keeping reduced axes:
 
 >>> ptu.decode_image(channel=0, dtime=-1, asxarray=True)
 <xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)> ...
@@ -226,6 +245,30 @@ Coordinates:
 Attributes...
     frequency:      19999200.0
 ...
+
+Write the TCSPC histogram and metadata to a PicoHarpT3 image mode PTU file:
+
+>>> imwrite(
+...     '_test.ptu',
+...     ptu[:],
+...     ptu.global_resolution,
+...     ptu.tcspc_resolution,
+...     # optional metadata
+...     pixel_time=ptu.pixel_time,
+...     record_type=PtuRecordType.PicoHarpT3,
+...     comment='Written by ptufile.py',
+...     tags={'File_RawData_GUID': [ptu.guid]},
+... )
+
+Read back the TCSPC histogram from the file:
+
+>>> tcspc_histogram = imread('_test.ptu')
+>>> import numpy
+>>> numpy.array_equal(tcspc_histogram, ptu[:])
+True
+
+Close the file handle:
+
 >>> ptu.close()
 
 Preview the image and metadata in a PTU file from the console::
@@ -236,22 +279,27 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.12.20'
+__version__ = '2024.12.28'
 
 __all__ = [
     '__version__',
     'imread',
+    'imwrite',
     'logger',
     'PqFile',
     'PqFileError',
     'PqFileMagic',
     'PhuFile',
     'PtuFile',
-    'PtuRecordType',
-    'PtuScannerType',
-    'PtuScanDirection',
+    'PtuWriter',
+    'PtuHwFeatures',
     'PtuMeasurementMode',
     'PtuMeasurementSubMode',
+    'PtuMeasurementWarnings',
+    'PtuRecordType',
+    'PtuScanDirection',
+    'PtuScannerType',
+    'PtuStopReason',
     'PhuMeasurementMode',
     'PhuMeasurementSubMode',
     'T2_RECORD_DTYPE',
@@ -265,8 +313,8 @@ import math
 import os
 import struct
 import sys
-import time
 import uuid
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, final, overload
 
@@ -275,7 +323,7 @@ if TYPE_CHECKING:
     from types import EllipsisType
     from typing import IO, Any, Literal
 
-    from numpy.typing import DTypeLike, NDArray
+    from numpy.typing import ArrayLike, DTypeLike, NDArray
     from xarray import DataArray
 
     Dimension = Literal['T', 'C', 'H']
@@ -381,8 +429,417 @@ def imread(
     return data
 
 
-class PqFileError(Exception):
-    """Exception to indicate invalid PicoQuant tagged file structure."""
+def imwrite(
+    file: str | os.PathLike[str] | IO[bytes],
+    data: ArrayLike,
+    /,
+    global_resolution: float,
+    tcspc_resolution: float,
+    *,
+    pixel_time: float | None = None,
+    has_frames: bool | None = None,
+    record_type: PtuRecordType | None = None,
+    pixel_resolution: float | None = None,
+    guid: str | uuid.UUID | None = None,
+    comment: str | None = None,
+    datetime: datetime | None = None,
+    tags: dict[str, Any] | None = None,
+    mode: Literal['w', 'wb', 'x', 'xb'] | None = None,
+) -> None:
+    """Write TCSPC histogram to T3 image mode PTU file.
+
+    Parameters:
+        file:
+            File name or writable binary stream.
+        data:
+            TCSPC histogram image stack.
+            The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
+            or 'TYXH' (with `has_frames=True`).
+            The dtype must be unsigned integer.
+        global_resolution:
+            Resolution of time tags in s, typically in ns range.
+            The inverse of the synctime or laser frequency.
+        tcspc_resolution:
+            Resolution of TCSPC in s, typically in ps range.
+            The width of a histogram bin.
+        pixel_time:
+            Time per pixel in s, typically in μs range.
+            Photons that cannot be encoded within pixel_time are omitted.
+            By default, pixel_time is set just large enough to encode all
+            photons.
+        has_frames:
+            4-dimensional data have frames in first axis ('TYXH'), no channels.
+            By default, true if data contains first dimension 'T', else false.
+        record_type, pixel_resolution, guid, comment, datetime, tags, mode:
+            Optional parameters passed to :py:class:`PtuWriter`.
+
+    """
+    if hasattr(data, 'dims'):
+        has_frames = 'T' in data.dims and data.dims[0] == 'T'
+
+    data = numpy.asarray(data)
+
+    if pixel_time is None:
+        data = data.reshape(PtuWriter.normalize_shape(data.shape, has_frames))
+        pixel_time = global_resolution * max(
+            1, float(numpy.max(data.sum(axis=(3, 4), dtype=numpy.uint64)))
+        )
+
+    with PtuWriter(
+        file,
+        data.shape,
+        global_resolution,
+        tcspc_resolution,
+        pixel_time,
+        record_type=record_type,
+        pixel_resolution=pixel_resolution,
+        has_frames=has_frames,
+        guid=guid,
+        comment=comment,
+        datetime=datetime,
+        tags=tags,
+        mode=mode,
+    ) as ptu:
+        ptu.write(data)
+
+
+class PtuWriter:
+    """Write TCSPC histogram to T3 image mode PTU file.
+
+    T3 TTTR records allow for a maximum of 63 channels and 32768 bins.
+    The TTTR records written can only be used to reconstruct the encoded
+    TCSPC histogram image stack, not for higher-than-pixel-time-resolution
+    intensity time-trace or correlation analysis.
+
+    Parameters:
+        file:
+            File name or writable binary stream.
+            File names typically end in '.PTU'.
+        shape:
+            Shape of TCSPC histogram image stack two write.
+            The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
+            or 'TYXH' (with `has_frames=True`).
+        global_resolution:
+            Resolution of time tags in s, typically in ns range.
+            The inverse of the synctime or laser frequency.
+        tcspc_resolution:
+            Resolution of TCSPC in s, typically in ps range.
+            The width of a histogram bin.
+        pixel_time:
+            Time per pixel in s, typically in μs range.
+            Photons that cannot be encoded within pixel_time are omitted.
+        record_type:
+            Type of TTTR T3 records to write.
+            By default, write ``PicoHarpT3`` records for up to two channels
+            and 4096 bins, else ``GenericT3``.
+        pixel_resolution:
+            Resolution of single pixel in μm. The default is 1 μm.
+        has_frames:
+            4-dimensional shape has frames in first axis ('TYXH'), no channels.
+        guid:
+            Windows formatted GUID used as global file identifier.
+            By default, a random GUID. Write to File_GUID tag.
+        comment:
+            File comment. Write to File_Comment tag.
+        datetime:
+            File creation date and time.
+            The default is time at function call.
+            Write to File_CreatingTime tag.
+        tags:
+            Additional tag Id and values to write.
+            Critical tags are automatically set and cannot be modified.
+            No validation is performed.
+            Refer to the "PicoQuant Unified Tag Dictionary" for valid Id and
+            values.
+        mode:
+            Binary file open mode if `file` is file name.
+            The default is 'w', which opens files for writing, truncating
+            existing files.
+            'x' opens files for exclusive creation, failing on existing files.
+
+    Raises:
+        ValueError
+            Not ``0 < tcspc_resolution <= global_resolution <= pixel_time``.
+
+    """
+
+    _fh: IO[bytes] | None
+    _shape: tuple[int, int, int, int, int]
+    _record_type: PtuRecordType
+    _number_records: int
+    _number_records_offset: int
+    _number_frames: int
+    _number_frames_offset: int
+    _global_resolution: float
+    _tcspc_resolution: float
+    _pixel_time: int
+
+    _line_start = 1
+    _line_stop = 2
+    _frame_change = 3
+
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | IO[bytes],
+        /,
+        shape: tuple[int, ...],
+        global_resolution: float,
+        tcspc_resolution: float,
+        pixel_time: float,
+        *,
+        record_type: PtuRecordType | None = None,
+        pixel_resolution: float | None = None,
+        has_frames: bool | None = None,
+        guid: str | uuid.UUID | None = None,
+        comment: str | None = None,
+        datetime: datetime | None = None,
+        tags: dict[str, Any] | None = None,
+        mode: Literal['w', 'wb', 'x', 'xb'] | None = None,
+    ) -> None:
+        """Write PTU header to file."""
+        # 0 < tcspc_resolution <= global_resolution <= pixel_time
+        if tcspc_resolution <= 0.0:
+            raise ValueError(f'{tcspc_resolution=} <= 0.0')
+        if tcspc_resolution > global_resolution:
+            raise ValueError(f'{tcspc_resolution=} > {global_resolution=}')
+        if pixel_time < global_resolution:
+            raise ValueError(f'{pixel_time=} < {global_resolution=}')
+
+        self._fh = None
+        self._number_records = 0
+        self._number_records_offset = 0
+        self._number_frames = 0
+        self._number_frames_offset = 0
+        self._global_resolution = global_resolution
+        self._tcspc_resolution = tcspc_resolution
+        self._pixel_time = int(round(pixel_time / global_resolution))
+        self._shape = shape = PtuWriter.normalize_shape(shape, has_frames)
+
+        if record_type is None:
+            if shape[3] <= 2 and shape[4] <= 4096:
+                record_type = PtuRecordType.PicoHarpT3
+            else:
+                record_type = PtuRecordType.GenericT3
+
+        if record_type == PtuRecordType.PicoHarpT3:
+            if shape[3] > 4 or shape[4] > 4096:
+                raise ValueError(
+                    f'{record_type=} does not support '
+                    f'{shape[3]} channels and {shape[4]} bins'
+                )
+            self._record_type = PtuRecordType.PicoHarpT3
+        elif record_type in {
+            PtuRecordType.GenericT3,
+            PtuRecordType.HydraHarp2T3,
+            PtuRecordType.TimeHarp260NT3,
+            PtuRecordType.TimeHarp260PT3,
+        }:
+            if shape[3] > 63 or shape[4] > 32768:
+                raise ValueError(
+                    f'{record_type=} does not support '
+                    f'{shape[3]} channels and {shape[4]} bins'
+                )
+            self._record_type = PtuRecordType.GenericT3
+        else:
+            raise ValueError(f'{record_type=} not supported')
+
+        if comment is None:
+            comment = ''
+
+        if guid is None:
+            guid = f'{{{uuid.uuid4()}}}'
+        elif isinstance(guid, uuid.UUID):
+            guid = f'{{{guid}}}'
+        elif len(guid) != 38 or guid[9] != '-':
+            raise ValueError('invalid GUID')
+
+        if pixel_resolution is None:
+            pixel_resolution = 1.0
+        elif pixel_resolution <= 0.0:
+            raise ValueError(f'{pixel_resolution=} <= 0.0')
+
+        if datetime is None:
+            datetime = now()
+
+        critical_tags = {
+            # tags not to be overwritten by user
+            'Measurement_Mode': PtuMeasurementMode.T3,
+            'Measurement_SubMode': PtuMeasurementSubMode.IMAGE,
+            'MeasDesc_GlobalResolution': float(self._global_resolution),
+            'MeasDesc_Resolution': float(self._tcspc_resolution),
+            'MeasDesc_BinningFactor': 1,
+            'TTResult_NumberOfRecords': self._number_records,
+            'TTResult_SyncRate': int(round(1.0 / self._global_resolution)),
+            'TTResultFormat_TTTRRecType': self._record_type,
+            'TTResultFormat_BitsPerRecord': 32,
+            'ImgHdr_Dimensions': 3,
+            'ImgHdr_Ident': PtuScannerType.LSM,
+            'ImgHdr_LineStart': self._line_start,
+            'ImgHdr_LineStop': self._line_stop,
+            'ImgHdr_Frame': self._frame_change,
+            'ImgHdr_MaxFrames': 0,
+            'ImgHdr_TimePerPixel': pixel_time * 1e3,  # ms
+            'ImgHdr_PixX': int(self._shape[2]),
+            'ImgHdr_PixY': int(self._shape[1]),
+            'ImgHdr_BiDirect': False,
+            'ImgHdr_SinCorrection': 0,
+        }
+        pqtags = {
+            # required tags written first, allowed to be overwritten by user
+            'File_GUID': guid,
+            'File_Comment': comment,
+            'File_CreatingTime': datetime,
+            'CreatorSW_Name': 'ptufile.py',
+            'CreatorSW_Version': __version__,
+        }
+        pqtags.update(critical_tags)
+        pqtags.update(
+            # other tags allowed to be overwritten by user
+            {
+                'ImgHdr_PixResol': float(pixel_resolution),
+                'HW_InpChannels': self._shape[3] + 1,  # used by FlimReader
+                # 'TTResult_StopReason': PtuStopReason(0)
+            }
+        )
+        if tags is not None:
+            # add user tags but do not overwrite critical tags
+            pqtags.update(
+                {k: v for k, v in tags.items() if k not in critical_tags}
+            )
+
+        header_list = [b'PQTTTR\x00\x001.0.00\x00\x00']  # magic and version
+        for tagid, value in pqtags.items():
+            if isinstance(value, (list, tuple)):
+                for index, item in enumerate(value):
+                    header_list.append(encode_tag(tagid, item, index))
+            else:
+                header_list.append(encode_tag(tagid, value))
+        header_list.append(encode_tag('Header_End', None))
+
+        header = b''.join(header_list)
+        offset = header.find(b'TTResult_NumberOfRecords')
+        assert offset > 0
+        self._number_records_offset = offset + 40
+
+        offset = header.find(b'ImgHdr_MaxFrames')
+        assert offset > 0
+        self._number_frames_offset = offset + 40
+
+        if isinstance(file, (str, os.PathLike)):
+            if mode is None:
+                mode = 'wb'
+            elif mode[-1] != 'b':
+                mode += 'b'  # type: ignore[assignment]
+            self._fh = open(file, mode)
+            self._close = True
+        elif hasattr(file, 'write') and hasattr(file, 'seek'):
+            self._fh = file
+            self._close = False
+        else:
+            raise ValueError(f'cannot write to {type(file)=}')
+
+        self._fh.write(header)
+
+    def write(self, data: ArrayLike, /) -> None:
+        """Append T3 encoded TCSPC histogram to file.
+
+        Parameters:
+            data:
+                TCSPC histogram image stack.
+                The shape must be compatible with the shape passed to
+                PtuWriter(). The dtype must be unsigned integer.
+
+        """
+        from ._ptufile import encode_t3_image
+
+        data = numpy.asarray(data)
+        if data.dtype.kind != 'u':
+            raise ValueError(f'{data.dtype=} is not an unsigned integer')
+        data = data.reshape(self._shape)
+
+        number_photons = int(data.sum(dtype=numpy.uint64))
+
+        if self._record_type == PtuRecordType.PicoHarpT3:
+            maxtime = 65536
+        else:
+            maxtime = 1024
+
+        shape = data.shape
+        number_records = (
+            number_photons
+            # overflows assuming all empty pixels
+            + (shape[0] * shape[1] * shape[2] * self._pixel_time) // maxtime
+            # line markers
+            + shape[0] * shape[1] * 2
+            # frame markers
+            + shape[0]
+        )
+        records = numpy.zeros(number_records, dtype=numpy.uint32)
+
+        number_records = encode_t3_image(
+            records,
+            data,
+            self._record_type,
+            self._pixel_time,
+            int(2 ** (self._line_start - 1)),
+            int(2 ** (self._line_stop - 1)),
+            int(2 ** (self._frame_change - 1)),
+        )
+        if number_records < 0:
+            raise ValueError(f'{records.size=} too small')
+
+        assert self._fh is not None
+        self._fh.write(records[:number_records].tobytes())
+
+        self._number_records += number_records
+        self._number_frames += shape[0]
+
+    def close(self) -> None:
+        """Close file handle after writing final tag values."""
+        if self._fh is None:
+            return
+
+        if self._number_records_offset > 0:
+            self._fh.seek(self._number_records_offset)
+            self._fh.write(struct.pack('<q', self._number_records))
+            self._fh.seek(self._number_frames_offset)
+            self._fh.write(struct.pack('<q', self._number_frames))
+
+        if self._close:
+            try:
+                self._fh.close()
+            except Exception:
+                pass
+        self._fh = None
+
+    def __enter__(self) -> PtuWriter:
+        return self
+
+    def __exit__(  # type: ignore[no-untyped-def]
+        self, exc_type, exc_value, traceback
+    ) -> None:
+        self.close()
+
+    @staticmethod
+    def normalize_shape(
+        shape: tuple[int, ...], has_frames: bool | None = None, /
+    ) -> tuple[int, int, int, int, int]:
+        """Return TCSPC histogram shape normalized to 5D 'TYXCH'."""
+        ndim = len(shape)
+        if ndim == 5:
+            'TYXCH'
+            return shape  # type: ignore[return-value]
+        if ndim == 3:
+            # 'YXH'
+            return (1, shape[0], shape[1], 1, shape[2])
+        if ndim == 4:
+            if has_frames:
+                # 'TYXH'
+                return (shape[0], shape[1], shape[2], 1, shape[3])
+            # 'YXCH'
+            return (1, shape[0], shape[1], shape[2], shape[3])
+
+        raise ValueError(f'invalid number of dimensions {len(shape)=}')
 
 
 class PqFileMagic(enum.Enum):
@@ -407,219 +864,8 @@ class PqFileMagic(enum.Enum):
     """Result file, PQRES, contains analysis generated during measurement."""
 
 
-class PhuMeasurementMode(enum.IntEnum):
-    """Kind of TCSPC measurement."""
-
-    UNKNOWN = -1
-    """Unknown mode."""
-
-    HISTOGRAM = 0
-    """Histogram mode."""
-
-    CONTI = 8
-    """Conti mode."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
-            return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
-        return obj
-
-
-class PhuMeasurementSubMode(enum.IntEnum):
-    """Kind of measurement."""
-
-    UNKNOWN = -1
-    """Unknown mode."""
-
-    OSCILLOSCOPE = 0
-    """Oscilloscope mode."""
-
-    INTEGRATING = 1
-    """Integrating mode."""
-
-    TRES = 2
-    """Time-Resolved Emission Spectra mode."""
-
-    SEQ = 3
-    """Sequence mode."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
-            return None
-        obj = cls(-1)
-        obj._value_ = value
-        return obj
-
-
-class PtuMeasurementMode(enum.IntEnum):
-    """Kind of TCSPC Measurement."""
-
-    UNKNOWN = -1
-    """Unknown mode."""
-
-    T2 = 2
-    """T2 mode."""
-
-    T3 = 3
-    """T3 mode."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
-            return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
-        return obj
-
-
-class PtuMeasurementSubMode(enum.IntEnum):
-    """Kind of measurement."""
-
-    UNKNOWN = -1
-    """Unknown mode."""
-
-    POINT = 1
-    """Point scan mode."""
-
-    LINE = 2
-    """Line scan mode."""
-
-    IMAGE = 3
-    """Image scan mode."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
-            return None
-        if value == 0:
-            obj = cls(1)  # Point
-        else:
-            obj = cls(-1)
-        obj._value_ = value
-        return obj
-
-
-class PtuScannerType(enum.IntEnum):
-    """Scanner hardware."""
-
-    UNKNOWN = -1
-    """Unknown scanner."""
-
-    PI_E710 = 1
-    """PI E-710 scanner."""
-
-    LSM = 3
-    """PicoQuant LSM scanner."""
-
-    PI_LINEWBS = 5
-    """PI Line WB scanner."""
-
-    PI_E725 = 6
-    """PI E-725 scanner."""
-
-    PI_E727 = 7
-    """PI E-727 scanner."""
-
-    MCL = 8
-    """MCL scanner."""
-
-    FLIMBEE = 9
-    """PicoQuant FLIMBee scanner."""
-
-    SCANBOX = 10
-    """Zeiss ScanBox scanner."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
-            return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
-        return obj
-
-
-class PtuScanDirection(enum.IntEnum):
-    """Scan direction, defining configuration of fast and slowscan axes."""
-
-    XY = 0
-    XZ = 1
-    YZ = 2
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int) or value != 0:
-            return None
-        obj = cls(0)  # XY
-        obj._value_ = value
-        return obj
-
-
-class PqTagType(enum.IntEnum):
-    """Tag type definition."""
-
-    Empty8 = 0xFFFF0008
-    Bool8 = 0x00000008
-    Int8 = 0x10000008
-    BitSet64 = 0x11000008
-    Color8 = 0x12000008
-    Float8 = 0x20000008
-    TDateTime = 0x21000008
-    Float8Array = 0x2001FFFF
-    AnsiString = 0x4001FFFF
-    WideString = 0x4002FFFF
-    BinaryBlob = 0xFFFFFFFF
-
-
-class PtuRecordType(enum.IntEnum):
-    """TTTR record format."""
-
-    PicoHarpT3 = 0x00010303  # Picoharp300T3
-    PicoHarpT2 = 0x00010203  # Picoharp300T2
-    HydraHarpT3 = 0x00010304
-    HydraHarpT2 = 0x00010204
-    HydraHarp2T3 = 0x01010304
-    HydraHarp2T2 = 0x01010204
-    TimeHarp260NT3 = 0x00010305
-    TimeHarp260NT2 = 0x00010205
-    TimeHarp260PT3 = 0x00010306
-    TimeHarp260PT2 = 0x00010206
-    GenericT2 = 0x00010207  # MultiHarpT2 and Picoharp330T2
-    GenericT3 = 0x00010307  # MultiHarpT3 and Picoharp330T3
-
-
-T2_RECORD_DTYPE = numpy.dtype(
-    [
-        ('time', numpy.uint64),
-        ('channel', numpy.int8),
-        ('marker', numpy.uint8),
-    ]
-)
-"""Numpy dtype of decoded T2 records."""
-
-T3_RECORD_DTYPE = numpy.dtype(
-    [
-        ('time', numpy.uint64),
-        ('dtime', numpy.int16),
-        ('channel', numpy.int8),
-        ('marker', numpy.uint8),
-    ]
-)
-"""Numpy dtype of decoded T3 records."""
-
-FILE_EXTENSIONS = {
-    '.ptu': PqFileMagic.PTU,
-    '.phu': PqFileMagic.PHU,
-    '.pck': PqFileMagic.PCK,
-    '.pco': PqFileMagic.PCO,
-    '.pfs': PqFileMagic.PFS,
-    '.pus': PqFileMagic.PFS,
-    '.pqres': PqFileMagic.PQRES,
-}
-"""File extensions of PicoQuant tagged files."""
+class PqFileError(Exception):
+    """Exception to indicate invalid PicoQuant tagged file structure."""
 
 
 class PqFile:
@@ -662,6 +908,7 @@ class PqFile:
     _fh: IO[bytes]
     _close: bool  # file needs to be closed
     _data_offset: int  # position of raw data in file
+    _number_records_offset: int  # position of TTResult_NumberOfRecords value
 
     _MAGIC: set[PqFileMagic] = set(PqFileMagic)
     _STR_: tuple[str, ...] = ('magic', 'version')  # attributes listed first
@@ -685,7 +932,7 @@ class PqFile:
             self._close = False
             self._fh = file
         else:
-            raise ValueError(f'cannot open file of type {type(file)}')
+            raise ValueError(f'cannot open {type(file)=}')
 
         fh = self._fh
         magic = fh.read(8)
@@ -708,73 +955,79 @@ class PqFile:
             return (
                 f'{msg} @ {self.name!r} '
                 f'{tagid=}, {index=}, {typecode=}, {value=!r}'
-            )[:80]
+            )[:160]
 
         tagid: str
         index: int
         typecode: int
         value: Any
-        ty = PqTagType
         unpack = struct.unpack
         try:
             while True:
-                # offset = fh.tell()
+                offset = fh.tell()
                 tagid_, index, typecode, value = unpack(
                     '<32siI8s', fh.read(48)
                 )
                 # print(tagid.strip(b'\0'), index, typecode, value)
                 tagid = tagid_.rstrip(b'\0').decode('ascii', errors='ignore')
-                # disabled: too many errors in PQRES
-                # if offset % 8:
-                #     logger().error(
-                #         errmsg(
-                #             f'tag {offset=} not divisible by 8',
-                #             tagid,
-                #             index,
-                #             typecode,
-                #             value,
-                #         )
-                #     )
+
+                # tags must start on positions divisible by 8
+                # disabled for PQRES
+                if offset % 8 and self.magic != PqFileMagic.PQRES:
+                    logger().error(
+                        errmsg(
+                            f'tag {offset=} not divisible by 8',
+                            tagid,
+                            index,
+                            typecode,
+                            value,
+                        )
+                    )
                 if tagid == 'Header_End':
                     break
                 if tagid == 'Fast_Load_End':
                     if fastload:
                         break
                     continue
-                if typecode == ty.Empty8:
-                    value = None
-                elif typecode == ty.Bool8:
+
+                # TODO: use dict to dispatch?
+                # frequent typecodes
+                if typecode == PqTagType.Int8:
+                    value = unpack('<q', value)[0]
+                elif typecode == PqTagType.Bool8:
                     value = bool(unpack('<q', value)[0])
-                elif typecode == ty.Int8:
-                    value = unpack('<q', value)[0]
-                elif typecode == ty.BitSet64:
-                    value = unpack('<q', value)[0]
-                elif typecode == ty.Color8:
-                    # TODO: unpack to RGB triple
-                    value = unpack('<q', value)[0]
-                elif typecode == ty.Float8:
+                elif typecode == PqTagType.Float8:
                     value = unpack('<d', value)[0]
-                elif typecode == ty.TDateTime:
-                    value = unpack('<d', value)[0]
-                    value = time.gmtime(int((float(value) - 25569) * 86400))
-                elif typecode == ty.Float8Array:
-                    size = unpack('<q', value)[0]
-                    value = unpack(f'<{size // 8}d', fh.read(size))
-                elif typecode == ty.AnsiString:
+                elif typecode == PqTagType.AnsiString:
                     size = unpack('<q', value)[0]
                     value = (
                         fh.read(size)
                         .rstrip(b'\0')
                         .decode('windows-1252', errors='ignore')
                     )
-                elif typecode == ty.WideString:
+                elif typecode == PqTagType.Empty8:
+                    value = None
+                elif typecode == PqTagType.TDateTime:
+                    value = unpack('<d', value)[0]
+                    value = datetime(1899, 12, 30) + timedelta(days=value)
+
+                # rarer typecodes
+                elif typecode == PqTagType.WideString:
                     size = unpack('<q', value)[0]
                     value = fh.read(size).decode('utf-16-le').rstrip('\0')
-                elif typecode == ty.BinaryBlob:
+                elif typecode == PqTagType.BinaryBlob:
                     size = unpack('<q', value)[0]
                     value = fh.read(size)
                     if tagid == 'ChkHistogram':
                         value = numpy.frombuffer(value, dtype=numpy.int64)
+                elif typecode == PqTagType.BitSet64:
+                    value = unpack('<q', value)[0]
+                elif typecode == PqTagType.Color8:
+                    # TODO: unpack to RGB triple
+                    value = unpack('<q', value)[0]
+                elif typecode == PqTagType.Float8Array:
+                    size = unpack('<q', value)[0]
+                    value = unpack(f'<{size // 8}d', fh.read(size))
                 else:
                     logger().error(
                         errmsg(
@@ -840,7 +1093,7 @@ class PqFile:
         """Name of file."""
         if self.filename:
             return os.path.basename(self.filename)
-        if self._fh.name:
+        if hasattr(self._fh, 'name') and self._fh.name:
             return self._fh.name
         return repr(self._fh)
 
@@ -848,6 +1101,36 @@ class PqFile:
     def guid(self) -> uuid.UUID:
         """Global identifier of file."""
         return uuid.UUID(self.tags['File_GUID'])
+
+    @property
+    def comment(self) -> str | None:
+        """File comment, if any."""
+        return self.tags.get('File_Comment')
+
+    @property
+    def datetime(self) -> datetime | None:
+        """File creation date, if any."""
+        if 'File_CreatingTime' not in self.tags:
+            return None
+        value = self.tags['File_CreatingTime']
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                try:
+                    from dateutil import parser
+
+                    return parser.parse(value)
+                except Exception:
+                    return None
+        if not isinstance(value, float):
+            return None
+        try:
+            return datetime(1899, 12, 30) + timedelta(days=value)
+        except Exception:
+            return None
 
     def close(self) -> None:
         """Close file handle and free resources."""
@@ -940,8 +1223,12 @@ class PhuFile(PqFile):
     @property
     def histogram_resolutions(self) -> tuple[float, ...] | None:
         """Base resolution for each histogram."""
-        res = self.tags.get('HistResDscr_HWBaseResolution')
-        return tuple(res) if res is not None else None
+        ncurves = self.number_histograms
+        if 'HistResDscr_HWBaseResolution' in self.tags:
+            return tuple(self.tags['HistResDscr_HWBaseResolution'])
+        if 'HW_BaseResolution' in self.tags:
+            return tuple([float(self.tags['HW_BaseResolution'])] * ncurves)
+        return None
 
     @property
     def number_histograms(self) -> int:
@@ -1002,19 +1289,18 @@ class PhuFile(PqFile):
             raise ValueError('invalid HistResDscr_HistogramBins tag')
 
         histograms: list[NDArray[numpy.uint32] | DataArray] = []
-        resolution = []
-        for offset, nbins, res in zip(
+        for offset, nbins in zip(
             self.tags['HistResDscr_DataOffset'][index],
             self.tags['HistResDscr_HistogramBins'][index],
-            self.tags['HistResDscr_HWBaseResolution'][index],
         ):
             self._fh.seek(offset)
             histograms.append(
                 numpy.fromfile(self._fh, dtype='<u4', count=nbins)
             )
-            resolution.append(res)
         if asxarray:
             from xarray import DataArray
+
+            assert self.histogram_resolutions is not None
 
             histograms = [
                 DataArray(
@@ -1028,7 +1314,7 @@ class PhuFile(PqFile):
                     },
                     # name=self.name,
                 )
-                for h, r in zip(histograms, resolution)
+                for h, r in zip(histograms, self.histogram_resolutions)
             ]
         # TODO: do not return tuple if index is integer?
         return tuple(histograms)
@@ -1100,7 +1386,7 @@ class PtuFile(PqFile):
     _STR_ = (
         'magic',
         'version',
-        'type',
+        'record_type',
         'measurement_mode',
         'measurement_submode',
         'scanner',
@@ -1131,7 +1417,12 @@ class PtuFile(PqFile):
         return self.decode_image(key, keepdims=False)
 
     @property
-    def type(self) -> PtuRecordType:
+    def record_offset(self) -> int:
+        """Position of records in file."""
+        return self._data_offset
+
+    @property
+    def record_type(self) -> PtuRecordType:
         """Type of TTTR records.
 
         Defines the TCSPC device and type of measurement that produced the
@@ -1158,17 +1449,40 @@ class PtuFile(PqFile):
         if (
             submode == 3
             and self.tags.get('ImgHdr_Dimensions', 3) == 3  # optional
-            and self.tags.get('ImgHdr_PixY', 1) > 1  # may be missing
+            # and self.tags.get('ImgHdr_PixY', 1) > 1  # may be missing
         ):
             return 3
         if (
             submode == 2
             and self.tags.get('ImgHdr_Dimensions', 2) == 2  # optional
-            and self.tags.get('ImgHdr_PixX', 1) > 1  # may be missing
+            # and self.tags.get('ImgHdr_PixX', 1) > 1  # may be missing
         ):
             # TODO: need linescan test file
             return 2
         return 1
+
+    @property
+    def measurement_warnings(self) -> PtuMeasurementWarnings | None:
+        """Warnings during measurement, or None if not specified."""
+        if 'TTResult_MDescWarningFlags' in self.tags:
+            return PtuMeasurementWarnings(
+                self.tags['TTResult_MDescWarningFlags']
+            )
+        return None
+
+    @property
+    def hardware_features(self) -> PtuHwFeatures | None:
+        """Hardware features, or None if not specified."""
+        if 'HW_Features' in self.tags:
+            return PtuHwFeatures(self.tags['HW_Features'])
+        return None
+
+    @property
+    def stop_reason(self) -> PtuStopReason | None:
+        """Reason for measurement end, or None if not specified."""
+        if 'TTResult_StopReason' in self.tags:
+            return PtuStopReason(self.tags['TTResult_StopReason'])
+        return None
 
     @property
     def scanner(self) -> PtuScannerType | None:
@@ -1291,7 +1605,7 @@ class PtuFile(PqFile):
             pixeltime = self._info.line_time / self.pixels_in_line
         else:
             pixeltime = 1e-3 / float(self.tags['MeasDesc_GlobalResolution'])
-        return int(round(pixeltime))
+        return max(1, int(round(pixeltime)))
 
     @property
     def global_line_time(self) -> int:
@@ -1376,6 +1690,9 @@ class PtuFile(PqFile):
     @property
     def pixel_time(self) -> float:
         """Time per pixel in s."""
+        pixel_time = float(self.tags.get('ImgHdr_TimePerPixel', 0.0))
+        if pixel_time > 0.0:
+            return pixel_time * 1e-3  # ms to s
         return self.global_pixel_time * self.global_resolution
 
     @property
@@ -1963,6 +2280,7 @@ class PtuFile(PqFile):
                 Selection is out of bounds.
 
         """
+        # TODO: support ReqHdr_ScanningPattern = 1, bidirectional per frame
         if not self.is_t3:
             # TODO: T2 images
             raise NotImplementedError('not a T3 image')
@@ -2212,10 +2530,10 @@ class PtuFile(PqFile):
                 The default is 1000.
             frame:
                 If < 0, integrate time axis, else show specified frame.
-                By default all frames are shown. Applies to T3 images.
+                By default, all frames are shown. Applies to T3 images.
             channel:
                 If < 0, integrate channel axis, else show specified channel.
-                By default all channels are shown. Applies to T3 images.
+                By default, all channels are shown. Applies to T3 images.
             dtime:
                 Specifies number of bins in T3 histograms.
                 If < 0 (default), integrate delay time axis of images.
@@ -2286,6 +2604,278 @@ class PtuFile(PqFile):
             pyplot.show()
 
 
+class PhuMeasurementMode(enum.IntEnum):
+    """Kind of TCSPC measurement (Measurement_Mode tag)."""
+
+    UNKNOWN = -1
+    """Unknown mode."""
+
+    HISTOGRAM = 0
+    """Histogram mode."""
+
+    CONTI = 8
+    """Conti mode."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)  # Unknown
+        obj._value_ = value
+        return obj
+
+
+class PhuMeasurementSubMode(enum.IntEnum):
+    """Kind of measurement (Measurement_SubMode tag)."""
+
+    UNKNOWN = -1
+    """Unknown mode."""
+
+    OSCILLOSCOPE = 0
+    """Oscilloscope mode."""
+
+    INTEGRATING = 1
+    """Integrating mode."""
+
+    TRES = 2
+    """Time-Resolved Emission Spectra mode."""
+
+    SEQ = 3
+    """Sequence mode."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)
+        obj._value_ = value
+        return obj
+
+
+class PtuMeasurementMode(enum.IntEnum):
+    """Kind of TCSPC Measurement (Measurement_Mode tag)."""
+
+    UNKNOWN = -1
+    """Unknown mode."""
+
+    T2 = 2
+    """T2 mode."""
+
+    T3 = 3
+    """T3 mode."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)  # Unknown
+        obj._value_ = value
+        return obj
+
+
+class PtuMeasurementSubMode(enum.IntEnum):
+    """Kind of measurement (Measurement_SubMode tag)."""
+
+    UNKNOWN = -1
+    """Unknown mode."""
+
+    POINT = 1
+    """Point scan mode."""
+
+    LINE = 2
+    """Line scan mode."""
+
+    IMAGE = 3
+    """Image scan mode."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        if value == 0:
+            obj = cls(1)  # Point
+        else:
+            obj = cls(-1)
+        obj._value_ = value
+        return obj
+
+
+class PtuScannerType(enum.IntEnum):
+    """Scanner hardware (ImgHdr_Ident tag)."""
+
+    UNKNOWN = -1
+    """Unknown scanner."""
+
+    PI_E710 = 1
+    """PI E-710 scanner."""
+
+    LSM = 3
+    """PicoQuant LSM scanner."""
+
+    PI_LINEWBS = 5
+    """PI Line WB scanner."""
+
+    PI_E725 = 6
+    """PI E-725 scanner."""
+
+    PI_E727 = 7
+    """PI E-727 scanner."""
+
+    MCL = 8
+    """MCL scanner."""
+
+    FLIMBEE = 9
+    """PicoQuant FLIMBee scanner."""
+
+    SCANBOX = 10
+    """Zeiss ScanBox scanner."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)  # Unknown
+        obj._value_ = value
+        return obj
+
+
+class PtuScanDirection(enum.IntEnum):
+    """Scan direction (ImgHdr_ScanDirection tag)."""
+
+    XY = 0
+    """X-Y scan."""
+
+    XZ = 1
+    """X-Z scan."""
+
+    YZ = 2
+    """Y-Z scan."""
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int) or value != 0:
+            return None
+        obj = cls(0)  # XY
+        obj._value_ = value
+        return obj
+
+
+class PtuStopReason(enum.IntEnum):
+    """Reason for measurement end (TTResult_StopReason tag)."""
+
+    TIME_OVER = 0
+    MANUAL = 1
+    OVERFLOW = 2
+    ERROR = 3
+    UNKNOWN = -1
+    FIFO_OVERRUN = -2
+    LEGACY_ERROR = -3
+    TCSPC_ERROR = -4
+    FILE_ERROR = -5
+    OUT_OF_MEMORY = -6
+    SUSPENDED = -7
+    SYS_ERROR = -8
+    QUEUE_OVERRUN = -9
+    DATA_XFER_FAIL = -10
+    DATA_CHECK_FAIL = -11
+    REF_CLK_LOST = -12
+    SYNC_LOST = -13
+
+    @classmethod
+    def _missing_(cls, value: object) -> object:
+        if not isinstance(value, int):
+            return None
+        obj = cls(-1)  # Unknown
+        obj._value_ = value
+        return obj
+
+
+class PtuMeasurementWarnings(enum.IntFlag):
+    """Warnings during measurement (TTResult_MDescWarningFlags tag)."""
+
+    SYNC_RATE_ZERO = 0x1
+    SYNC_RATE_TOO_LOW = 0x2
+    SYNC_RATE_TOO_HIGH = 0x4
+    INPT_RATE_ZERO = 0x10
+    INPT_RATE_TOO_HIGH = 0x40
+    EVENTS_DROPPED = 0x80
+    INPT_RATE_RATIO = 0x100
+    DIVIDER_GT_ONE = 0x200
+    TIME_SPAN_TOO_SMALL = 0x400
+    OFFSET_UNNECESSARY = 0x800
+
+
+class PtuHwFeatures(enum.IntFlag):
+    """Hardware features (HW_Features tag)."""
+
+    DLL = 0x1
+    TTTR = 0x2
+    MARKERS = 0x4
+    LOW_RES = 0x8
+    TRIG_OUT = 0x10
+    PROG_DEADTIME = 0x20
+    EXT_FPGA = 0x40
+    PROG_HYSTERESES = 0x80
+    COINCIDENCE_FILTERING = 0x100
+    INPUT_MODES = 0x200
+
+
+class PqTagType(enum.IntEnum):
+    """Tag type definition."""
+
+    Empty8 = 0xFFFF0008
+    Bool8 = 0x00000008
+    Int8 = 0x10000008
+    BitSet64 = 0x11000008
+    Color8 = 0x12000008
+    Float8 = 0x20000008
+    TDateTime = 0x21000008
+    Float8Array = 0x2001FFFF
+    AnsiString = 0x4001FFFF
+    WideString = 0x4002FFFF
+    BinaryBlob = 0xFFFFFFFF
+
+
+class PtuRecordType(enum.IntEnum):
+    """TTTR record format."""
+
+    PicoHarpT3 = 0x00010303
+    """PicoHarp 300 T3."""
+
+    PicoHarpT2 = 0x00010203
+    """PicoHarp 300 T2."""
+
+    HydraHarpT3 = 0x00010304
+    """HydraHarp V1.x T3."""
+
+    HydraHarpT2 = 0x00010204
+    """HydraHarp V1.x T2."""
+
+    HydraHarp2T3 = 0x01010304
+    """HydraHarp V2.x T3."""
+
+    HydraHarp2T2 = 0x01010204
+    """HydraHarp V2.x T2."""
+
+    TimeHarp260NT3 = 0x00010305
+    """TimeHarp 260N T3."""
+
+    TimeHarp260NT2 = 0x00010205
+    """TimeHarp 260N T2."""
+
+    TimeHarp260PT3 = 0x00010306
+    """TimeHarp 260P T3."""
+
+    TimeHarp260PT2 = 0x00010206
+    """TimeHarp 260P T2."""
+
+    GenericT2 = 0x00010207
+    """MultiHarp and Picoharp 330 T2."""
+
+    GenericT3 = 0x00010307
+    """MultiHarp and Picoharp 330 T3."""
+
+
 @dataclasses.dataclass
 class PtuInfo:
     """Information about decoded TTTR records.
@@ -2348,6 +2938,90 @@ class PtuInfo:
             *(f'{key}={value},' for key, value in self.__dict__.items()),
             end='\n)',
         )
+
+
+T2_RECORD_DTYPE = numpy.dtype(
+    [
+        ('time', numpy.uint64),
+        ('channel', numpy.int8),
+        ('marker', numpy.uint8),
+    ]
+)
+"""Numpy dtype of decoded T2 records."""
+
+T3_RECORD_DTYPE = numpy.dtype(
+    [
+        ('time', numpy.uint64),
+        ('dtime', numpy.int16),
+        ('channel', numpy.int8),
+        ('marker', numpy.uint8),
+    ]
+)
+"""Numpy dtype of decoded T3 records."""
+
+FILE_EXTENSIONS = {
+    '.ptu': PqFileMagic.PTU,
+    '.phu': PqFileMagic.PHU,
+    '.pck': PqFileMagic.PCK,
+    '.pco': PqFileMagic.PCO,
+    '.pfs': PqFileMagic.PFS,
+    '.pus': PqFileMagic.PFS,
+    '.pqres': PqFileMagic.PQRES,
+}
+"""File extensions of PicoQuant tagged files."""
+
+
+def encode_tag(tagid: str, value: Any, index: int = -1, /) -> bytes:
+    """Return encoded PqTag."""
+    if value is None:
+        typecode = PqTagType.Empty8
+        buffer = b'\x00\x00\x00\x00\x00\x00\x00\x00'
+    elif isinstance(value, bool):
+        # must check bool before int
+        typecode = PqTagType.Bool8
+        buffer = struct.pack('<q', value)
+    elif isinstance(value, enum.IntFlag):
+        # must check IntFlag before int
+        typecode = PqTagType.BitSet64
+        buffer = struct.pack('<q', value)
+    elif isinstance(value, int):
+        typecode = PqTagType.Int8
+        buffer = struct.pack('<q', value)
+    elif isinstance(value, float):
+        typecode = PqTagType.Float8
+        buffer = struct.pack('<d', value)
+    elif isinstance(value, str):
+        if not value.endswith('\0'):
+            value += '\0'
+        try:
+            typecode = PqTagType.AnsiString
+            value_ = value.encode('windows-1252')
+        except UnicodeEncodeError:
+            typecode = PqTagType.WideString
+            value_ = value.encode('utf-16-le')
+        value_ += align_bytes(len(value_), 8)
+        buffer = struct.pack('<q', len(value_)) + value_
+    elif isinstance(value, datetime):
+        typecode = PqTagType.TDateTime
+        value -= datetime(1899, 12, 30)
+        value /= timedelta(days=1)
+        buffer = struct.pack('<d', value)
+    elif isinstance(value, uuid.UUID):
+        typecode = PqTagType.AnsiString
+        value = f'{{{value}}}'.encode('windows-1252')
+        value += align_bytes(len(value), 8)
+        buffer = struct.pack('<q', len(value)) + value
+    elif isinstance(value, bytes):
+        typecode = PqTagType.BinaryBlob
+        value += align_bytes(len(value), 8)
+        buffer = struct.pack('<q', len(value)) + value
+    else:
+        # TODO: support Color8 and Float8Array
+        raise ValueError(f'{type(value)=} not supported')
+
+    # tags always have lengths divisible by 8
+    assert len(buffer) % 8 == 0
+    return struct.pack('<32siI', tagid.encode(), index, typecode) + buffer
 
 
 def sinusoidal_correction(
@@ -2416,6 +3090,17 @@ def create_output(
         with tempfile.NamedTemporaryFile(dir=tempdir, suffix='.memmap') as fh:
             return numpy.memmap(fh, shape=shape, dtype=dtype, mode='w+')
     return numpy.memmap(out, shape=shape, dtype=dtype, mode='w+')
+
+
+def now() -> datetime:
+    """Return current date and time."""
+    return datetime.now()
+
+
+def align_bytes(size: int, align: int, /) -> bytes:
+    """Return trailing bytes to align bytes of size."""
+    size %= align
+    return b'' if size == 0 else b'\0' * (align - size)
 
 
 def indent(*args: Any, sep: str = '', end: str = '') -> str:
