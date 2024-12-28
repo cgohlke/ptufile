@@ -1,6 +1,16 @@
 Revisions
 ---------
 
+2024.12.28
+
+- Add imwrite function to encode TCSPC image histogram in T3 PTU format.
+- Add enums for more PTU tag values.
+- Add PqFile.datetime property.
+- Read TDateTime tag as datetime instead of struct_time (breaking).
+- Rename PtuFile.type property to record_type (breaking).
+- Fix reading PHU missing HistResDscr_HWBaseResolution tag.
+- Warn if tags are not 8-byte aligned in file.
+
 2024.12.20
 
 - Support bi-directional sinusoidal scanning (WIP).
