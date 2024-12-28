@@ -42,8 +42,6 @@
 
 """
 
-# TODO: only decode channels with photons
-
 from libc.stdint cimport int8_t, uint8_t, uint16_t, int16_t, uint32_t, uint64_t
 
 cdef packed struct t2_t:
@@ -58,6 +56,14 @@ cdef packed struct t3_t:
     int8_t channel
     uint8_t marker
     # uint8_t[4] _align
+
+ctypedef uint32_t (*encode_func_t)(
+    const uint32_t time,
+    const uint32_t dtime,
+    const uint32_t channel,
+    const uint32_t overflow,
+    const uint32_t marker
+) noexcept nogil
 
 ctypedef void (*decode_func_t)(
     const uint32_t record,
@@ -548,7 +554,8 @@ def decode_t3_image(
                 &imarker,
                 &ispecial
             )
-            time_global = overflow + itime
+            # +1 because line start marker may be in first record
+            time_global = overflow + itime + 1
             if ispecial == 0:
                 # regular record
                 if (
@@ -565,6 +572,7 @@ def decode_t3_image(
 
                 if bidirectional and iy_binned % 2 != bidiv:
                     # line backward scan
+                    # TODO: support bidirectional per frame
                     # TODO: is bishift correct for sinusoidal scanning?
                     ix = line_time - 1 - ix + bishift
 
@@ -606,10 +614,11 @@ def decode_t3_image(
                             break
                     if iframe >= startt and iy >= starty and iy < stopy:
                         iy_binned = (iy - starty) // biny
-                        time_line_start = time_global if time_global > 0 else 1
+                        time_line_start = time_global
                         if iframe_binned != (iframe - startt) // bint:
                             iframe_binned = (iframe - startt) // bint
-                            times[iframe_binned] = time_line_start
+                            # -1 because time_global is one-based
+                            times[iframe_binned] = time_line_start - 1
                     else:
                         # line is not part of selection
                         time_line_start = 0
@@ -823,22 +832,22 @@ cdef void decode_pt3(
     tmp = (record >> 28) & 0xf  # 4 bit channel
     if tmp != 0xf:
         # regular record
+        # TODO: understand this undocumented channel decoding
         if tmp > 0 and tmp < 5:
-            channel[0] = tmp - 1
+            channel[0] = tmp - 1  # one to zero-based
         else:
             # should not happen
             channel[0] = 4
         special[0] = 0
+    elif dtime[0] == 0:
+        # overflow
+        special[0] = 1
+        overflow[0] += 65536
     else:
-        if dtime[0] == 0:
-            # overflow
-            special[0] = 1
-            overflow[0] += 65536
-        else:
-            # marker
-            special[0] = 2
-            marker[0] = dtime[0]
-            dtime[0] = 0
+        # marker
+        special[0] = 2
+        marker[0] = dtime[0]
+        dtime[0] = 0
 
 
 cdef void decode_pt2(
@@ -1007,3 +1016,176 @@ cdef void decode_ht2v1(
             # marker
             special[0] = 2
             marker[0] = tmp
+
+
+def encode_t3_image(
+    uint32_t[::1] records,
+    const uint_t[:, :, :, :, ::1] histogram,
+    const uint32_t format,
+    const uint32_t pixel_time,  # average global time spent in pixel
+    const uint32_t line_start,  # mask
+    const uint32_t line_stop,  # mask
+    const uint32_t frame_change,  # mask
+):
+    """Return GenericT3 records from TCSPC image histogram.
+
+    No bounds checking is performed writing to records array.
+
+    """
+    # TODO: frame and line markers may be combined in one record
+    # TODO: record photons across channels at same time (slower)
+    # TODO: randomize photon arrival times at fixed count rate
+
+    cdef:
+        ssize_t sizet, sizey, sizex, sizec, sizeh
+        ssize_t t, y, x, c, h, nrecords
+        uint_t count
+        uint32_t time, time_in_pixel, overflow, maxtime, maxoverflow, i
+        encode_func_t encode
+
+    sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
+
+    if format == 0x00010303:
+        # PicoHarpT3/PicoHarp300
+        encode = encode_pt3
+        maxtime = 65536
+        maxoverflow = 1
+    elif format == 0x00010307:
+        # GenericT3 (MultiHarpT3 and Picoharp330T3)
+        encode = encode_ht3
+        maxtime = 1024
+        maxoverflow = 1023
+    else:
+        raise ValueError(f'{format=} not supported')
+
+    with nogil:
+        time = 0
+        nrecords = 0
+
+        for t in range(sizet):
+            # frame
+            for y in range(sizey):
+                # line
+
+                # line start marker
+                records[nrecords] = encode(time, 0, 0, 0, line_start)
+                nrecords += 1
+
+                for x in range(sizex):
+                    # pixel
+                    time_in_pixel = 0
+
+                    # record all photons at different time
+                    for c in range(sizec):
+                        # channel
+                        for h in range(sizeh):
+                            # bin
+                            for count in range(histogram[t, y, x, c, h]):
+                                # photon
+                                records[nrecords] = encode(
+                                    time, <uint32_t> h, <uint32_t> c, 0, 0
+                                )
+                                nrecords += 1
+
+                                # increment time
+                                time += 1
+                                if time == maxtime:
+                                    # overflow
+                                    time = 0
+                                    records[nrecords] = encode(0, 0, 0, 1, 0)
+                                    nrecords += 1
+
+                                time_in_pixel += 1
+                                if time_in_pixel == pixel_time:
+                                    break
+                            if time_in_pixel == pixel_time:
+                                break
+                        if time_in_pixel == pixel_time:
+                            break
+
+                    # move to next pixel
+                    # TODO: calculate overflows
+                    overflow = 0
+                    for i in range(pixel_time - time_in_pixel):
+                        time += 1
+                        if time == maxtime:
+                            # overflow
+                            time = 0
+                            overflow += 1
+                            if overflow == maxoverflow:
+                                records[nrecords] = encode(
+                                    0, 0, 0, overflow, 0
+                                )
+                                nrecords += 1
+                                overflow = 0
+                    if overflow > 0:
+                        records[nrecords] = encode(0, 0, 0, overflow, 0)
+                        nrecords += 1
+
+                # line end marker
+                records[nrecords] = encode(time, 0, 0, 0, line_stop)
+                nrecords += 1
+
+            # frame change marker
+            records[nrecords] = encode(time, 0, 0, 0, frame_change)
+            nrecords += 1
+
+    return nrecords
+
+
+cdef uint32_t encode_pt3(
+    const uint32_t time,
+    const uint32_t dtime,
+    const uint32_t channel,
+    const uint32_t overflow,
+    const uint32_t marker,
+) noexcept nogil:
+    cdef:
+        uint32_t record = time  # & <uint32_t> 0xffff  # 16 bit nsync
+
+    if marker != 0:
+        # dtime is marker
+        record |= marker << <uint32_t> 16
+        # all channel bits set
+        record |= <uint32_t> 0xf0000000
+    elif overflow != 0:
+        # dtime is 0, all channel bits set
+        record |= <uint32_t> 0xf0000000
+    else:
+        # 12 bit dtime
+        record |= dtime << <uint32_t> 16
+        # 4 bit channel, one-based
+        record |= (channel + 1) << <uint32_t> 28
+    return record
+
+
+cdef uint32_t encode_ht3(
+    const uint32_t time,
+    const uint32_t dtime,
+    const uint32_t channel,
+    const uint32_t overflow,
+    const uint32_t marker,
+) noexcept nogil:
+    cdef:
+        uint32_t record = time  # & <uint32_t> 0x3ff  # 10 bit nsync
+
+    record |= dtime << <uint32_t> 10  # 15 bit dtime
+    # record |= (dtime & <uint32_t> 0x7fff) << <uint32_t> 10  # 15 bit dtime
+
+    if marker != 0:
+        # 1 bit special
+        record |= <uint32_t> 0x80000000
+        # 3 bit marker instead of channel
+        record |= marker << <uint32_t> 25
+        # record |= (marker & 0xf) << <uint32_t> 25
+    elif overflow != 0:
+        # 1 bit special and all bits set instead of channel
+        record |= <uint32_t> 0xfe000000
+        # 10 bit multiple of 1024 increment of nsync instead of nsync
+        record |= overflow
+        # record |= overflow & <uint32_t> 0x3ff
+    else:
+        # 6 bit channel
+        record |= channel << <uint32_t> 25
+        # record |= (channel & <uint32_t> 0x3f) << <uint32_t> 25
+    return record
