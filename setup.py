@@ -125,7 +125,9 @@ setup(
     python_requires='>=3.10',
     install_requires=['numpy'],
     setup_requires=['setuptools', 'numpy'],
-    extras_require={'all': ['xarray', 'tifffile', 'matplotlib']},
+    extras_require={
+        'all': ['xarray', 'tifffile', 'matplotlib', 'python-dateutil']
+    },
     ext_modules=ext_modules,
     zip_safe=False,
     platforms=['any'],
