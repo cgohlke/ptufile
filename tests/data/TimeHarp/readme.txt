@@ -1,0 +1,1 @@
+Obtained from https://www.tcspc.com/doku.php/howto:data_file_import, https://www.picoquant.com/dl_software/TimeHarp260/TimeHarp260_SW_and_DLL_V3_2.zip
