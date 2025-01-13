@@ -1,6 +1,6 @@
 # ptufile.py
 
-# Copyright (c) 2023-2024, Christoph Gohlke
+# Copyright (c) 2023-2025, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -29,7 +29,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Read and write PicoQuant PTU files.
+"""Read and write PicoQuant PTU and related files.
 
 Ptufile is a Python library to
 
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2024.12.28
+:Version: 2025.1.13
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -65,10 +65,10 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.1.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2024.11.0 (recommended)
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.1
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.1.1 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2024.12.12 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.1.10 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.14.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -76,6 +76,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2025.1.13
+
+- Fall back to file size if TTResult_NumberOfRecords is zero (#2).
 
 2024.12.28
 
@@ -196,6 +200,8 @@ Read metadata from a PicoQuant PTU FLIM file:
 Decode TTTR records from the PTU file to ``numpy.recarray``:
 
 >>> decoded = ptu.decode_records()
+>>> decoded.dtype
+dtype([('time', '<u8'), ('dtime', '<i2'), ('channel', 'i1'), ('marker', 'u1')])
 
 Get global times of frame changes from markers:
 
@@ -205,7 +211,7 @@ array([1571185680], dtype=uint64)
 Decode TTTR records to overall delay-time histograms per channel:
 
 >>> ptu.decode_histogram(dtype='uint8')
-array([[ 5,  7,  7, ..., 10,  9,  2]], dtype=uint8)
+array([[ 5,  7,  7, ..., 10,  9,  2]], shape=(2, 3126), dtype=uint8)
 
 Get information about the FLIM image histogram in the PTU file:
 
@@ -226,7 +232,8 @@ Slice step sizes define binning, -1 being used to integrate along axis:
 >>> ptu[:, ..., 0, ::-1]
 array([[[103, ..., 38],
               ...
-        [ 47, ..., 30]]], dtype=uint16)
+        [ 47, ..., 30]]],
+      shape=(1, 256, 256), dtype=uint16)
 
 Alternatively, decode the first channel and integrate all histogram bins
 into a ``xarray.DataArray``, keeping reduced axes:
@@ -235,7 +242,7 @@ into a ``xarray.DataArray``, keeping reduced axes:
 <xarray.DataArray (T: 1, Y: 256, X: 256, C: 1, H: 1)> ...
 array([[[[[103]],
            ...
-         [[ 30]]]]], dtype=uint16)
+         [[ 30]]]]], shape=(1, 256, 256, 1, 1), dtype=uint16)
 Coordinates:
   * T        (T) float64... 0.05625
   * Y        (Y) float64... -0.0001304 ... 0.0001294
@@ -279,7 +286,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2024.12.28'
+__version__ = '2025.1.13'
 
 __all__ = [
     '__version__',
@@ -435,8 +442,8 @@ def imwrite(
     /,
     global_resolution: float,
     tcspc_resolution: float,
-    *,
     pixel_time: float | None = None,
+    *,
     has_frames: bool | None = None,
     record_type: PtuRecordType | None = None,
     pixel_resolution: float | None = None,
@@ -459,6 +466,7 @@ def imwrite(
         global_resolution:
             Resolution of time tags in s, typically in ns range.
             The inverse of the synctime or laser frequency.
+            One photon is encoded per time tag.
         tcspc_resolution:
             Resolution of TCSPC in s, typically in ps range.
             The width of a histogram bin.
@@ -469,7 +477,8 @@ def imwrite(
             photons.
         has_frames:
             4-dimensional data have frames in first axis ('TYXH'), no channels.
-            By default, true if data contains first dimension 'T', else false.
+            By default, true if data contains metadata specifying the first
+            dimension is 'T', else false.
         record_type, pixel_resolution, guid, comment, datetime, tags, mode:
             Optional parameters passed to :py:class:`PtuWriter`.
 
@@ -522,6 +531,7 @@ class PtuWriter:
         global_resolution:
             Resolution of time tags in s, typically in ns range.
             The inverse of the synctime or laser frequency.
+            One photon is encoded per time tag.
         tcspc_resolution:
             Resolution of TCSPC in s, typically in ps range.
             The width of a histogram bin.
@@ -815,9 +825,7 @@ class PtuWriter:
     def __enter__(self) -> PtuWriter:
         return self
 
-    def __exit__(  # type: ignore[no-untyped-def]
-        self, exc_type, exc_value, traceback
-    ) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         self.close()
 
     @staticmethod
@@ -1143,9 +1151,7 @@ class PqFile:
     def __enter__(self) -> PqFile:
         return self
 
-    def __exit__(  # type: ignore[no-untyped-def]
-        self, exc_type, exc_value, traceback
-    ) -> None:
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         self.close()
 
     def __repr__(self) -> str:
@@ -1501,10 +1507,18 @@ class PtuFile(PqFile):
         """Resolution of TCSPC in s (BaseResolution * iBinningFactor)."""
         return float(self.tags.get('MeasDesc_Resolution', 0.0))
 
-    @property
+    @cached_property
     def number_records(self) -> int:
         """Number of TTTR records."""
-        return int(self.tags['TTResult_NumberOfRecords'])
+        count = int(self.tags.get('TTResult_NumberOfRecords', 0))
+        if count == 0:
+            count = (self._fh.seek(0, os.SEEK_END) - self._data_offset) // 4
+            if count != 0:
+                logger().warning(
+                    f'{self!r} TTResult_NumberOfRecords is zero. '
+                    'Using remaining file content as records'
+                )
+        return count
 
     @property
     def number_photons(self) -> int:
@@ -1931,7 +1945,7 @@ class PtuFile(PqFile):
                 'invalid bits per record '
                 f"{self.tags['TTResultFormat_BitsPerRecord']}"
             )
-        count = self.tags['TTResult_NumberOfRecords']
+        count = self.number_records
         result: NDArray[numpy.uint32]
         if memmap:
             return numpy.memmap(
