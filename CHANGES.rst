@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2025.1.13
+
+- Fall back to file size if TTResult_NumberOfRecords is zero (#2).
+
 2024.12.28
 
 - Add imwrite function to encode TCSPC image histogram in T3 PTU format.
