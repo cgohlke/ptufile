@@ -34,7 +34,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.1.13
+:Version: 2025.2.12
 
 """
 
@@ -51,9 +51,8 @@ import ptufile
 import ptufile.numcodecs
 import pytest
 import xarray
-from numpy.testing import assert_array_equal
+from numpy.testing import assert_almost_equal, assert_array_equal
 from ptufile import (
-    __version__,
     PhuFile,
     PhuMeasurementMode,
     PhuMeasurementSubMode,
@@ -67,11 +66,12 @@ from ptufile import (
     PtuRecordType,
     PtuScannerType,
     PtuWriter,
+    __version__,
     imread,
     imwrite,
 )
 
-HERE = pathlib.Path(os.path.dirname(__file__))
+DATA = pathlib.Path(os.path.dirname(__file__)) / 'data'
 
 FILES = [
     # PicoHarpT3
@@ -108,7 +108,7 @@ def test_version():
 
 def test_non_pqfile():
     """Test read non-PicoQuant file fails."""
-    fname = HERE / 'FRET_GFP and mRFP.pt3'
+    fname = DATA / 'FRET_GFP and mRFP.pt3'
     with pytest.raises(PqFileError):
         with PqFile(fname):
             pass
@@ -116,7 +116,7 @@ def test_non_pqfile():
 
 def test_non_ptu():
     """Test read non-PTU file fails."""
-    fname = HERE / 'Settings.pfs'
+    fname = DATA / 'Settings.pfs'
     with pytest.raises(PqFileError):
         with PtuFile(fname):
             pass
@@ -124,7 +124,7 @@ def test_non_ptu():
 
 def test_pq_fastload():
     """Test read tags using fastload."""
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     with PqFile(fname, fastload=True) as pq:
         str(pq)
         assert pq.tags['File_GUID'] == '{4f6e5f68-8289-483d-9d9a-7974b77ef8b8}'
@@ -133,7 +133,7 @@ def test_pq_fastload():
 
 def test_pck():
     """Test read PCK file."""
-    fname = HERE / 'Tutorials.sptw/IRF_Fluorescein.pck'
+    fname = DATA / 'Tutorials.sptw/IRF_Fluorescein.pck'
     with PqFile(fname) as pq:
         str(pq)
         assert pq.magic == PqFileMagic.PCK
@@ -146,7 +146,7 @@ def test_pck():
 
 def test_pco():
     """Test read PCO file."""
-    fname = HERE / 'Tutorials.sptw/Hyperosmotic_Shock_MDCK_Cell.pco'
+    fname = DATA / 'Tutorials.sptw/Hyperosmotic_Shock_MDCK_Cell.pco'
     with PqFile(fname) as pq:
         str(pq)
         assert pq.magic == PqFileMagic.PCO
@@ -156,7 +156,7 @@ def test_pco():
 
 def test_pfs():
     """Test read PFS file."""
-    fname = HERE / 'Settings.pfs'
+    fname = DATA / 'Settings.pfs'
     with PqFile(fname) as pq:
         str(pq)
         assert pq.magic == PqFileMagic.PFS
@@ -167,7 +167,7 @@ def test_pfs():
 
 def test_pqres(caplog):
     """Test read PQRES file."""
-    fname = HERE / 'Samples.sptw/AnisotropyImage.pqres'
+    fname = DATA / 'Samples.sptw/AnisotropyImage.pqres'
     with caplog.at_level(logging.ERROR):
         with PqFile(fname) as pq:
             str(pq)
@@ -180,7 +180,7 @@ def test_pqres(caplog):
 @pytest.mark.parametrize('filetype', [str, io.BytesIO])
 def test_ptu(filetype):
     """Test read PTU file."""
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     if filetype is not str:
         fname = open(fname, 'rb')
     try:
@@ -192,9 +192,13 @@ def test_ptu(filetype):
             assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
             assert ptu.scanner == PtuScannerType.LSM
             assert ptu.measurement_ndim == 3
-            assert ptu.filename == (
-                os.fspath(fname) if filetype is str else ''
-            )
+            assert ptu.filehandle is not None
+            if filetype is str:
+                assert ptu.filename == str(fname.name)
+                assert ptu.dirname == str(fname.parent)
+            else:
+                assert ptu.filename == ''
+                assert ptu.dirname == ''
             assert ptu.version == '00.0.1'
             assert ptu.comment == ''
             assert ptu.datetime is None
@@ -211,7 +215,7 @@ def test_ptu(filetype):
 @pytest.mark.parametrize('filetype', [str, io.BytesIO])
 def test_phu(filetype):
     """Test read PHU file."""
-    fname = HERE / 'TimeHarp/Decay_Coumarin_6.phu'
+    fname = DATA / 'TimeHarp/Decay_Coumarin_6.phu'
     if filetype is not str:
         fname = open(fname, 'rb')
     try:
@@ -245,7 +249,7 @@ def test_phu(filetype):
 def test_phu_baseres():
     """Test read PHU file without HistResDscr_HWBaseResolution."""
     # also has a non-ISO datetime string format
-    fname = HERE / 'FluoPlot/Naphtal_BuOH_TRES.phu'
+    fname = DATA / 'FluoPlot/Naphtal_BuOH_TRES.phu'
 
     with PhuFile(fname) as phu:
         str(phu)
@@ -268,7 +272,7 @@ def test_phu_baseres():
 
 def test_ptu_t3_image():
     """Test decode T3 image."""
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert str(ptu.guid) == '4f6e5f68-8289-483d-9d9a-7974b77ef8b8'
@@ -363,7 +367,7 @@ def test_ptu_t3_image():
 
 def test_ptu_channels():
     """Test decode T3 image with empty leading channels."""
-    fname = HERE / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
+    fname = DATA / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert str(ptu.guid) == 'b767c46e-9693-4ad9-9fcf-7fab5e4377fc'
@@ -453,7 +457,7 @@ def test_ptu_channels():
 
 def test_ptu_t3_sinusoidal():
     """Test decode T3 image with sinusoidal correction."""
-    fname = HERE / 'tttrlib/5kDa_1st_1_1_1.ptu'
+    fname = DATA / 'tttrlib/5kDa_1st_1_1_1.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
@@ -510,16 +514,14 @@ def test_ptu_t3_sinusoidal():
 
         records = ptu.read_records()
         assert len(records) == ptu.number_records
-        im = ptu.decode_image(
-            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
-        )
+        im = ptu.decode_image(frame=-1, dtime=-1, channel=0, keepdims=False)
         assert im.shape == (512, 512)
         assert im[399, 18] == 37
 
 
 def test_ptu_t3_bidirectional():
     """Test decode T3 image acquired with bidirectional scanning."""
-    fname = HERE / 'fastFLIM/A2_Shep2_26.ptu'
+    fname = DATA / 'fastFLIM/A2_Shep2_26.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
@@ -576,9 +578,7 @@ def test_ptu_t3_bidirectional():
 
         records = ptu.read_records()
         assert len(records) == ptu.number_records
-        im = ptu.decode_image(
-            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
-        )
+        im = ptu.decode_image(frame=-1, dtime=-1, channel=0, keepdims=False)
         assert im.shape == (1024, 1024)
         # TODO: compare to ground truth image from SymPhoTime
         assert im[430, 430] == 1057  # even line
@@ -605,7 +605,7 @@ def test_ptu_t3_bidirectional():
 
 def test_ptu_t3_bidirectional_sinusoidal():
     """Test decode T3 image acquired with bidirectional sinusoidal scanning."""
-    fname = HERE / 'tttr-data/imaging/leica/sp8/d0/G-28_S1_1_1.ptu'
+    fname = DATA / 'tttr-data/imaging/leica/sp8/d0/G-28_S1_1_1.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
@@ -662,9 +662,7 @@ def test_ptu_t3_bidirectional_sinusoidal():
 
         records = ptu.read_records()
         assert len(records) == ptu.number_records
-        im = ptu.decode_image(
-            records=records, frame=-1, dtime=-1, channel=0, keepdims=False
-        )
+        im = ptu.decode_image(frame=-1, dtime=-1, channel=0, keepdims=False)
         assert im.shape == (512, 512)
         # TODO: compare to ground truth image from SymPhoTime
         assert im[430, 430] == 38  # even line
@@ -702,7 +700,7 @@ def test_ptu_t3_line():
 
 def test_ptu_t3_point():
     """Test decode T3 point scan."""
-    fname = HERE / '1XEGFP_1.ptu'
+    fname = DATA / '1XEGFP_1.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert str(ptu.guid) == 'dec6a033-99a9-482d-afbd-5b5743a25133'
@@ -767,7 +765,7 @@ def test_ptu_t3_point():
 @pytest.mark.parametrize('fname', FILES)
 def test_ptu_decode_records(fname):
     """Test decode records."""
-    with PtuFile(HERE / fname) as ptu:
+    with PtuFile(DATA / fname) as ptu:
         decoded = ptu.decode_records()
         assert decoded.size == ptu.number_records
         assert decoded['time'][-1] == ptu.global_acquisition_time
@@ -787,7 +785,7 @@ def test_ptu_decode_records(fname):
 @pytest.mark.parametrize('fname', FILES)
 def test_ptu_decode_histogram(fname, asxarray):
     """Test decode histograms."""
-    with PtuFile(HERE / fname) as ptu:
+    with PtuFile(DATA / fname) as ptu:
         ptu.decode_histogram(asxarray=asxarray)
         # TODO: verify values
         with pytest.raises(ValueError):
@@ -798,27 +796,40 @@ def test_ptu_decode_histogram(fname, asxarray):
 @pytest.mark.parametrize('fname', FILES)
 def test_ptu_plot(fname, verbose):
     """Test plot methods."""
-    with PtuFile(HERE / fname) as ptu:
+    with PtuFile(DATA / fname) as ptu:
         ptu.plot(show=False, verbose=verbose)
 
 
 def test_ptu_read_records():
     """Test PTU read_records method."""
     # the file is tested in test_issue_skip_frame
-    fname = HERE / 'Samples.sptw/GUVs.ptu'
-    with PtuFile(fname) as ptu:
-        records = ptu.read_records(memmap=True)
+    fname = DATA / 'Samples.sptw/GUVs.ptu'
+    with PtuFile(fname, mode='r+') as ptu:
+        # use cached memory map of records
+        records = ptu.read_records(memmap='r+', cache=True)
+
+        assert isinstance(records, numpy.memmap), type(records)
         assert records.size == ptu.number_records
-        im0 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
-        im1 = ptu.decode_image(frame=1, channel=1, dtime=-1)
+        assert records is ptu.read_records(cache=True)  # retrieve from cache
+        assert records is not ptu.read_records()  # new copy by default
+        im0 = ptu.decode_image(frame=1, channel=1, dtime=-1)
+        del records
+
+        records = ptu.read_records(memmap=True)
+        assert isinstance(records, numpy.memmap), type(records)
+        im1 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
         assert_array_equal(im0, im1)
+        del records
+
+        with pytest.raises(ValueError):
+            ptu.read_records(memmap='abc')
 
 
 @pytest.mark.parametrize('output', ['ndarray', 'memmap', 'fname'])
 def test_ptu_output(output):
     """Test PTU decoding to different output."""
     # the file is tested in test_issue_skip_frame
-    fname = HERE / 'Samples.sptw/GUVs.ptu'
+    fname = DATA / 'Samples.sptw/GUVs.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.shape == (100, 512, 512, 2, 4096)
         selection = (
@@ -849,7 +860,7 @@ def test_ptu_output(output):
 def test_ptu_getitem():
     """Test slice PTU."""
     # the file is tested in test_issue_skip_frame
-    fname = HERE / 'Samples.sptw/GUVs.ptu'
+    fname = DATA / 'Samples.sptw/GUVs.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.shape == (100, 512, 512, 2, 4096)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
@@ -908,7 +919,7 @@ def test_ptu_getitem():
 
 def test_issue_datetime():
     """Test file with datetime stored as float, not str or TDateTime."""
-    fname = HERE / 'Zenodo_7656540/2a_FLIM_single_image.ptu'
+    fname = DATA / 'Zenodo_7656540/2a_FLIM_single_image.ptu'
 
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.1'
@@ -920,7 +931,7 @@ def test_issue_datetime():
 def test_issue_falcon_point():
     """Test PTU from FALCON with no ImgHdr_PixY."""
     # file produced by FALCON in image mode but no ImgHdr_PixX/Y
-    fname = HERE / 'FALCON_ptu_examples/40MHz_example.ptu'
+    fname = DATA / 'FALCON_ptu_examples/40MHz_example.ptu'
 
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.1'
@@ -976,7 +987,7 @@ def test_issue_falcon_point():
 
 def test_issue_skip_frame():
     """Test PTU with incomplete last frame."""
-    fname = HERE / 'Samples.sptw/GUVs.ptu'
+    fname = DATA / 'Samples.sptw/GUVs.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.0'
         assert ptu.magic == PqFileMagic.PTU
@@ -1035,7 +1046,7 @@ def test_issue_marker_order():
     """Test PTU with strange marker order."""
     # the file has `[ | ][][][ | ]`` instead  of `[] | [][] | []`` markers
     # first and last frame are incomplete
-    fname = HERE / 'Samples.sptw/CENP-labelled_cells_for_FRET.ptu'
+    fname = DATA / 'Samples.sptw/CENP-labelled_cells_for_FRET.ptu'
     with PtuFile(fname, trimdims='CH') as ptu:
         assert ptu.version == '00.0.0'
         # assert ptu._data_offset == 4616
@@ -1104,7 +1115,7 @@ def test_issue_marker_order():
 
 def test_issue_empty_line():
     """Test line not empty when first record is start marker."""
-    fname = HERE / 'ExampleFLIM/Example_image.sc.ptu'
+    fname = DATA / 'ExampleFLIM/Example_image.sc.ptu'
     with PtuFile(fname) as ptu:
         str(ptu)
         assert ptu.version == '00.0.1'
@@ -1144,7 +1155,7 @@ def test_issue_empty_line():
 
 def test_issue_pixeltime_zero():
     """Test PTU with zero ImgHdr_TimePerPixel."""
-    fname = HERE / 'nc.picoquant.com/DaisyPollen1.ptu'
+    fname = DATA / 'nc.picoquant.com/DaisyPollen1.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.version == '1.0.00'
         assert ptu.magic == PqFileMagic.PTU
@@ -1203,18 +1214,19 @@ def test_issue_pixeltime_zero():
 
 
 def test_issue_number_records_zero(caplog):
-    """Test PTU with TTResult_NumberOfRecords=0."""
+    """Test PTU with zero TTResult_NumberOfRecords."""
     # https://github.com/cgohlke/ptufile/issues/2
-    fname = HERE / 'FLIM_number_records_zero.ptu'
+    fname = DATA / 'FLIM_number_records_zero.ptu'
     with PtuFile(fname) as ptu:
         with caplog.at_level(logging.WARNING):
             assert ptu.number_records == 12769472
         assert 'TTResult_NumberOfRecords is zero' in caplog.text
+        assert len(ptu.read_records(cache=False)) == 12769472
 
 
 def test_issue_record_number(caplog):
     """Test PTU with too few records."""
-    fname = HERE / 'Samples.sptw/Cy5_immo_FLIM+Pol-Imaging.ptu'
+    fname = DATA / 'Samples.sptw/Cy5_immo_FLIM+Pol-Imaging.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.0'
         with caplog.at_level(logging.ERROR):
@@ -1232,7 +1244,7 @@ def test_issue_record_number(caplog):
 
 def test_issue_tag_index_order(caplog):
     """Test tag index out of order."""
-    fname = HERE / 'picoquant-sample-data/hydraharp/v10_t2.ptu'
+    fname = DATA / 'picoquant-sample-data/hydraharp/v10_t2.ptu'
     with caplog.at_level(logging.ERROR):
         with PqFile(fname) as pq:
             str(pq)
@@ -1258,7 +1270,7 @@ def test_issue_tag_index_order(caplog):
 )
 def test_issue_dtime(dtime, size):
     """Test dtime parameter."""
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     im = imread(
         fname,
         frame=0,
@@ -1275,7 +1287,7 @@ def test_issue_dtime(dtime, size):
 
 def test_imread():
     """Test imread function."""
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     im = imread(
         fname,
         [slice(1), None],  # first frame
@@ -1327,7 +1339,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
             data[..., :, -1] = 1
 
     guid = '{b767c46e-9693-4ad9-9fcf-7fab5e4377fc}'
-    comment = f'{shape=} \u2764\uFE0F'
+    comment = f'{shape=} \u2764\ufe0f'
 
     buf = io.BytesIO()
     imwrite(
@@ -1385,7 +1397,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
 )
 def test_imwrite_rewrite(record_type):
     """Test imwrite function with real data."""
-    fname = HERE / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
+    fname = DATA / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
     with PtuFile(fname) as ptu:
         guid = ptu.guid
         datetime = ptu.datetime
@@ -1539,9 +1551,9 @@ def test_write_none():
 
 
 def test_write_iterate():
-    """Test PtuWriter.write interatively."""
-    fname = HERE / 'Samples.sptw/GUVs.ptu'
-    fnout = HERE / '_test_write_iterate_ptu'
+    """Test PtuWriter.write iteratively."""
+    fname = DATA / 'Samples.sptw/GUVs.ptu'
+    fnout = DATA / '_test_write_iterate_ptu'
     with PtuFile(fname) as ptu_in:
         assert ptu_in.shape == (100, 512, 512, 2, 4096)
 
@@ -1656,21 +1668,94 @@ def test_imwrite_exceptions():
         imwrite(buf, numpy.empty((31, 33, 1), numpy.uint8), guid='-', **kwargs)
 
 
-@pytest.mark.parametrize('path', [f for f in HERE.iterdir() if f.is_dir()])
-def test_glob(path):
+def test_signal_from_ptu():
+    """Test PhasorPy signal_from_ptu function."""
+    from phasorpy.io import signal_from_ptu
+
+    filename = (
+        DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    )
+    signal = signal_from_ptu(
+        filename, frame=-1, channel=0, dtime=0, keepdims=False
+    )
+    assert signal.values.sum(dtype=numpy.uint64) == 6064854
+    assert signal.dtype == numpy.uint16
+    assert signal.shape == (256, 256, 132)
+    assert signal.dims == ('Y', 'X', 'H')
+    assert_almost_equal(
+        signal.coords['H'].data[[1, -1]], [0.0969697, 12.7030303], decimal=4
+    )
+    assert signal.attrs['frequency'] == 78.02
+    assert signal.attrs['ptu_tags']['HW_Type'] == 'PicoHarp'
+
+    signal = signal_from_ptu(
+        filename,
+        frame=-1,
+        channel=0,
+        dtime=None,
+        keepdims=True,
+        trimdims='TC',
+    )
+    assert signal.values.sum(dtype=numpy.uint64) == 6065123
+    assert signal.dtype == numpy.uint16
+    assert signal.shape == (1, 256, 256, 1, 4096)
+    assert signal.dims == ('T', 'Y', 'X', 'C', 'H')
+    assert_almost_equal(
+        signal.coords['H'].data[[1, -1]], [0.0969697, 397.09091], decimal=4
+    )
+    assert signal.attrs['frequency'] == 78.02
+
+
+def test_signal_from_ptu_irf():
+    """Test read PhasorPy signal_from_ptu function with IRF."""
+    from phasorpy.io import signal_from_ptu
+
+    filename = DATA / 'Samples.sptw/Cy5_diff_IRF+FLCS-pattern.ptu'
+    signal = signal_from_ptu(filename)
+    assert signal.values.sum(dtype=numpy.uint64) == 13268548
+    assert signal.dtype == numpy.uint32
+    assert signal.shape == (1, 1, 1, 2, 6250)
+    assert signal.dims == ('T', 'Y', 'X', 'C', 'H')
+    assert_almost_equal(
+        signal.coords['H'].data[[1, -1]], [0.007999, 49.991999], decimal=4
+    )
+    assert pytest.approx(signal.attrs['frequency'], abs=1e-4) == 19.999732
+    assert signal.attrs['ptu_tags']['HW_Type'] == 'PicoHarp 300'
+
+    signal = signal_from_ptu(filename, channel=0, keepdims=True)
+    assert signal.values.sum(dtype=numpy.uint64) == 6984849
+    assert signal.shape == (1, 1, 1, 1, 6250)
+    assert signal.dims == ('T', 'Y', 'X', 'C', 'H')
+
+    with pytest.raises(ValueError):
+        signal_from_ptu(filename, dtime=-1)
+
+    signal = signal_from_ptu(filename, channel=0, dtime=None, keepdims=False)
+    assert signal.values.sum(dtype=numpy.uint64) == 6984849
+    assert signal.shape == (1, 1, 4096)
+    assert signal.dims == ('Y', 'X', 'H')
+    assert_almost_equal(
+        signal.coords['H'].data[[1, -1]], [0.007999, 32.759999], decimal=4
+    )
+
+
+@pytest.mark.parametrize(
+    'fname', glob.glob('**/*.p??', root_dir=DATA, recursive=True)
+)
+def test_glob(fname):
     """Test read all PicoQuant files."""
-    for fname in glob.glob(str(path) + '/*.p*'):
-        if 'htmlcov' in fname or 'url in fname':
-            continue
-        if fname[-3:] in {'.py', 'pyc', 'pt2', 'pt3', 'pdf', 'phd'}:
-            continue
-        with PqFile(fname) as pq:
-            str(pq)
-            is_ptu = pq.magic == PqFileMagic.PTU
-        if not is_ptu:
-            continue
-        with PtuFile(fname) as ptu:
-            str(ptu)
+    fname = str(DATA / fname)
+    if 'htmlcov' in fname or 'url' in fname or 'defective' in fname:
+        pytest.skip()
+    if fname[-3:].lower() in {'.py', 'pyc', 'pt2', 'pt3', 'pdf', 'phd', 'png'}:
+        pytest.skip()
+    with PqFile(fname) as pq:
+        str(pq)
+        is_ptu = pq.magic == PqFileMagic.PTU
+    if not is_ptu:
+        pytest.skip()
+    with PtuFile(fname) as ptu:
+        str(ptu)
 
 
 @pytest.mark.parametrize(
@@ -1681,7 +1766,7 @@ def test_ptu_zip_sequence(trimdims, dtime, size):
     # requires ~28GB. Do not trim H dimensions such that files match
     from tifffile import FileSequence
 
-    fname = HERE / 'napari_flim_phasor_plotter/hazelnut_FLIM_z_stack.zip'
+    fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_z_stack.zip'
     with FileSequence(imread, '*.ptu', container=fname) as ptus:
         assert ptus.shape == (11,)
         stack = ptus.asarray(
@@ -1696,7 +1781,7 @@ def test_ptu_leica_sequence():
     # 410 files. Requires ~16GB.
     import tifffile  # >= 2024.2.12
 
-    fname = HERE / 'Flipper TR time series.sptw/*.ptu'
+    fname = DATA / 'Flipper TR time series.sptw/*.ptu'
     stack = tifffile.imread(
         str(fname),  # glob pattern needs to be str
         pattern=r'_(t)(\d+)_(z)(\d+)',
@@ -1724,7 +1809,7 @@ def test_ptu_numcodecs():
     import tifffile  # > 2024.2.12
     import zarr
 
-    pathname = HERE / 'Flipper TR time series.sptw'
+    pathname = DATA / 'Flipper TR time series.sptw'
     url = str(pathname).replace('\\', '/')
     jsonfile = str(pathname / 'FLIPPER.json')
     fname = str(pathname / '*.ptu')  # glob pattern needs to be str
