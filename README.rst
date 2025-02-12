@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2025.1.13
+:Version: 2025.2.12
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,24 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.8, 3.13.1 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.1
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.1.1 (recommended)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.1.2 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.1.10 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.14.1 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.0 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.0.11 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.0.12 (build)
 
 Revisions
 ---------
+
+2025.2.12
+
+- Add options to specify file open modes to PqFile and PtuFile.read_records.
+- Add convenience properties to PqFile and PtuFile.
+- Cache records read from file.
 
 2025.1.13
 
@@ -79,29 +85,6 @@ Revisions
 - Add property to identify channels with photons.
 
 2024.9.14
-
-- Improve typing.
-
-2024.7.13
-
-- Detect point scans in image mode.
-- Deprecate Python 3.9, support Python 3.13.
-
-2024.5.24
-
-- Fix docstring examples not correctly rendered on GitHub.
-
-2024.4.24
-
-- Build wheels with NumPy 2.
-
-2024.2.20
-
-- Change definition of PtuFile.frequency (breaking).
-- Add option to specify number of bins returned by decode_histogram.
-- Add option to return histograms of one period.
-
-2024.2.15
 
 - …
 
@@ -151,7 +134,7 @@ Read properties and tags from any type of PicoQuant unified tagged file:
 
 .. code-block:: python
 
-    >>> pq = PqFile('tests/Settings.pfs')
+    >>> pq = PqFile('tests/data/Settings.pfs')
     >>> pq.magic
     <PqFileMagic.PFS: ...>
     >>> pq.guid
@@ -164,7 +147,7 @@ Read metadata from a PicoQuant PTU FLIM file:
 
 .. code-block:: python
 
-    >>> ptu = PtuFile('tests/FLIM.ptu')
+    >>> ptu = PtuFile('tests/data/FLIM.ptu')
     >>> ptu.magic
     <PqFileMagic.PTU: ...>
     >>> ptu.record_type
@@ -275,4 +258,4 @@ Close the file handle:
 
 Preview the image and metadata in a PTU file from the console::
 
-    python -m ptufile tests/FLIM.ptu
+    python -m ptufile tests/data/FLIM.ptu
