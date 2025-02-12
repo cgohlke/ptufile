@@ -1,6 +1,12 @@
 Revisions
 ---------
 
+2025.2.12
+
+- Add options to specify file open modes to PqFile and PtuFile.read_records.
+- Add convenience properties to PqFile and PtuFile.
+- Cache records read from file.
+
 2025.1.13
 
 - Fall back to file size if TTResult_NumberOfRecords is zero (#2).
