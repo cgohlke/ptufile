@@ -7,7 +7,7 @@ Read and write PicoQuant PTU and related files
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, and PQRES), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2025.2.12
+:Version: 2025.2.20
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -38,17 +38,23 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.2
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.3
 - `Xarray <https://pypi.org/project/xarray>`_ 2025.1.2 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.1.10 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.0 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.2.18 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.12 (build)
 
 Revisions
 ---------
+
+2025.2.20
+
+- Rename PqFileMagic to PqFileType (breaking).
+- Rename PqFile.magic to PqFile.type (breaking).
+- Add PQDAT and SPQR file types.
 
 2025.2.12
 
@@ -102,7 +108,8 @@ The PicoQuant unified file formats are documented at the
 
 The following features are currently not implemented due to the lack of
 test files or documentation: PT2 and PT3 files, decoding images from
-T2 formats, bidirectional per frame, and deprecated image reconstruction.
+T2 and SPQR formats, bidirectional per frame, and deprecated image
+reconstruction.
 
 Compatibility of written PTU files with other software is limitedly tested,
 as are decoding line, bidirectional, and sinusoidal scanning.
@@ -135,8 +142,8 @@ Read properties and tags from any type of PicoQuant unified tagged file:
 .. code-block:: python
 
     >>> pq = PqFile('tests/data/Settings.pfs')
-    >>> pq.magic
-    <PqFileMagic.PFS: ...>
+    >>> pq.type
+    <PqFileType.PFS: ...>
     >>> pq.guid
     UUID('86d428e2-cb0b-4964-996c-04456ba6be7b')
     >>> pq.tags
@@ -148,8 +155,8 @@ Read metadata from a PicoQuant PTU FLIM file:
 .. code-block:: python
 
     >>> ptu = PtuFile('tests/data/FLIM.ptu')
-    >>> ptu.magic
-    <PqFileMagic.PTU: ...>
+    >>> ptu.type
+    <PqFileType.PTU: ...>
     >>> ptu.record_type
     <PtuRecordType.PicoHarpT3: 66307>
     >>> ptu.measurement_mode
