@@ -14,7 +14,7 @@ buildnumber = ''
 DEBUG = bool(os.environ.get('PTUFILE_DEBUG', False))
 
 
-def search(pattern, string, flags=0):
+def search(pattern: str, string: str, flags: int = 0) -> str:
     """Return first match of pattern in string."""
     match = re.search(pattern, string, flags)
     if match is None:
@@ -22,7 +22,7 @@ def search(pattern, string, flags=0):
     return match.groups()[0]
 
 
-def fix_docstring_examples(docstring):
+def fix_docstring_examples(docstring: str) -> str:
     """Return docstring with examples fixed for GitHub."""
     start = True
     indent = False
