@@ -34,13 +34,14 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.2.12
+:Version: 2025.2.20
 
 """
 
 import datetime
 import glob
 import io
+import itertools
 import logging
 import os
 import pathlib
@@ -53,12 +54,13 @@ import pytest
 import xarray
 from numpy.testing import assert_almost_equal, assert_array_equal
 from ptufile import (
+    FILE_EXTENSIONS,
     PhuFile,
     PhuMeasurementMode,
     PhuMeasurementSubMode,
     PqFile,
     PqFileError,
-    PqFileMagic,
+    PqFileType,
     PtuFile,
     PtuMeasurementMode,
     PtuMeasurementSubMode,
@@ -136,7 +138,7 @@ def test_pck():
     fname = DATA / 'Tutorials.sptw/IRF_Fluorescein.pck'
     with PqFile(fname) as pq:
         str(pq)
-        assert pq.magic == PqFileMagic.PCK
+        assert pq.type == PqFileType.PCK
         assert pq.version == '1.0.00'
         assert pq.tags['File_Comment'].startswith('Check point file of ')
         assert_array_equal(
@@ -149,7 +151,7 @@ def test_pco():
     fname = DATA / 'Tutorials.sptw/Hyperosmotic_Shock_MDCK_Cell.pco'
     with PqFile(fname) as pq:
         str(pq)
-        assert pq.magic == PqFileMagic.PCO
+        assert pq.type == PqFileType.PCO
         assert pq.version == '1.0.00'
         assert pq.tags['CreatorSW_Modules'] == 0
 
@@ -159,7 +161,7 @@ def test_pfs():
     fname = DATA / 'Settings.pfs'
     with PqFile(fname) as pq:
         str(pq)
-        assert pq.magic == PqFileMagic.PFS
+        assert pq.type == PqFileType.PFS
         assert pq.version == '1.0.00'
         assert pq.tags['HW_SerialNo'] == '<SerNo. empty>'
         assert pq.tags['Defaults_Begin'] is None
@@ -172,9 +174,41 @@ def test_pqres(caplog):
         with PqFile(fname) as pq:
             str(pq)
             # assert 'not divisible by 8' in caplog.text
-            assert pq.magic == PqFileMagic.PQRES
+            assert pq.type == PqFileType.PQRES
             assert pq.version == '00.0.1'
             assert pq.tags['VarStatFilterGrpIdx'].startswith(b'\xe7/\x00\x00')
+
+
+def test_pqdat(caplog):
+    """Test read PQDAT file."""
+    fname = DATA / 'Luminosa/FRET_20230606-185222/FittedCurveIRF.pqdat'
+    with caplog.at_level(logging.ERROR):
+        with PqFile(fname) as pq:
+            str(pq)
+            # assert 'not divisible by 8' in caplog.text
+            assert pq.type == PqFileType.PQDAT
+            assert pq.version == '1.0.00'
+            assert len(pq.tags['LSDCurveX']) == 1254
+            assert len(pq.tags['LSDCurveY']) == 1254
+            preview = numpy.frombuffer(
+                pq.tags['PreviewImage'][4:], dtype=numpy.uint8
+            ).reshape(128, 128, 4)
+            assert preview.shape == (128, 128, 4)
+
+
+def test_spqr():
+    """Test read SPQR file."""
+    fname = DATA / 'Luminosa/GattaQUant_Cells_FLIM/GattaQUant_Cells_FLIM.spqr'
+    with PqFile(fname) as pq:
+        str(pq)
+        assert pq.type == PqFileType.SPQR
+        assert pq.version == '1.0.00'
+        assert pq.tags['CreatorSW_Name'] == 'NovaConvert'
+        preview = numpy.frombuffer(
+            pq.tags['SPQRPrevImage'], dtype=numpy.uint8
+        ).reshape(128, 128, 4)
+        assert preview.shape == (128, 128, 4)
+        assert len(pq.tags['SPQRBinWidths']) == 128
 
 
 @pytest.mark.parametrize('filetype', [str, io.BytesIO])
@@ -186,7 +220,7 @@ def test_ptu(filetype):
     try:
         with PtuFile(fname) as ptu:
             str(ptu)
-            assert ptu.magic == PqFileMagic.PTU
+            assert ptu.type == PqFileType.PTU
             assert ptu.record_type == PtuRecordType.PicoHarpT3
             assert ptu.measurement_mode == PtuMeasurementMode.T3
             assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -221,7 +255,7 @@ def test_phu(filetype):
     try:
         with PhuFile(fname) as phu:
             str(phu)
-            assert phu.magic == PqFileMagic.PHU
+            assert phu.type == PqFileType.PHU
             assert phu.measurement_mode == PhuMeasurementMode.HISTOGRAM
             assert phu.measurement_submode == PhuMeasurementSubMode.INTEGRATING
             assert phu.version == '1.1.00'
@@ -253,7 +287,7 @@ def test_phu_baseres():
 
     with PhuFile(fname) as phu:
         str(phu)
-        assert phu.magic == PqFileMagic.PHU
+        assert phu.type == PqFileType.PHU
         assert phu.measurement_mode == PhuMeasurementMode.HISTOGRAM
         assert phu.measurement_submode == PhuMeasurementSubMode.INTEGRATING
         assert phu.version == '1.0.00'
@@ -278,7 +312,7 @@ def test_ptu_t3_image():
         assert str(ptu.guid) == '4f6e5f68-8289-483d-9d9a-7974b77ef8b8'
         assert ptu.version == '00.0.1'
         # assert ptu._data_offset == 4616
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -374,7 +408,7 @@ def test_ptu_channels():
         assert ptu.version == '1.0.00'
         assert ptu.comment.startswith('SPAD-CH1523')
         assert ptu.datetime == datetime.datetime(2020, 4, 7, 18, 8, 44, 860000)
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.GenericT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -462,7 +496,7 @@ def test_ptu_t3_sinusoidal():
         str(ptu)
         assert ptu.version == '1.0.00'
         # assert ptu._data_offset == 4616
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -526,7 +560,7 @@ def test_ptu_t3_bidirectional():
         str(ptu)
         assert ptu.version == '1.0.00'
         # assert ptu._data_offset == 4616
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.GenericT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -610,7 +644,7 @@ def test_ptu_t3_bidirectional_sinusoidal():
         str(ptu)
         assert ptu.version == '1.0.00'
         # assert ptu._data_offset == 5816
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -705,7 +739,7 @@ def test_ptu_t3_point():
         str(ptu)
         assert str(ptu.guid) == 'dec6a033-99a9-482d-afbd-5b5743a25133'
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.POINT
@@ -935,7 +969,7 @@ def test_issue_falcon_point():
 
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.1'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -990,7 +1024,7 @@ def test_issue_skip_frame():
     fname = DATA / 'Samples.sptw/GUVs.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.version == '00.0.0'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1050,7 +1084,7 @@ def test_issue_marker_order():
     with PtuFile(fname, trimdims='CH') as ptu:
         assert ptu.version == '00.0.0'
         # assert ptu._data_offset == 4616
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1119,7 +1153,7 @@ def test_issue_empty_line():
     with PtuFile(fname) as ptu:
         str(ptu)
         assert ptu.version == '00.0.1'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.PicoHarpT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1158,7 +1192,7 @@ def test_issue_pixeltime_zero():
     fname = DATA / 'nc.picoquant.com/DaisyPollen1.ptu'
     with PtuFile(fname) as ptu:
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.GenericT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1250,7 +1284,7 @@ def test_issue_tag_index_order(caplog):
             str(pq)
             assert 'tag index out of order' in caplog.text
             assert 'UsrHeadName' in caplog.text
-            assert pq.magic == PqFileMagic.PTU
+            assert pq.type == PqFileType.PTU
             assert pq.version == '1.0.00'
             assert pq.tags['UsrHeadName'] == [
                 '405.0nm (DC405)',
@@ -1368,7 +1402,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
     with PtuFile(buf) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == record_type
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1424,7 +1458,7 @@ def test_imwrite_rewrite(record_type):
     with PtuFile(buf) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == record_type
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1494,7 +1528,7 @@ def test_imwrite_pixel(record_type, count):
     with PtuFile(buf) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == record_type
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1524,7 +1558,7 @@ def test_write_none():
     with PtuFile(buf) as ptu:
         str(ptu)
         assert ptu.version == '1.0.00'
-        assert ptu.magic == PqFileMagic.PTU
+        assert ptu.type == PqFileType.PTU
         assert ptu.record_type == PtuRecordType.GenericT3
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1571,7 +1605,7 @@ def test_write_iterate():
 
         with PtuFile(fnout) as ptu:
             assert ptu.version == '1.0.00'
-            assert ptu.magic == PqFileMagic.PTU
+            assert ptu.type == PqFileType.PTU
             assert ptu.record_type == PtuRecordType.PicoHarpT3
             assert ptu.measurement_mode == PtuMeasurementMode.T3
             assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
@@ -1740,22 +1774,23 @@ def test_signal_from_ptu_irf():
 
 
 @pytest.mark.parametrize(
-    'fname', glob.glob('**/*.p??', root_dir=DATA, recursive=True)
+    'fname',
+    itertools.chain.from_iterable(
+        glob.glob(f'**/*{ext}', root_dir=DATA, recursive=True)
+        for ext in FILE_EXTENSIONS.keys()
+    ),
 )
 def test_glob(fname):
     """Test read all PicoQuant files."""
     fname = str(DATA / fname)
     if 'htmlcov' in fname or 'url' in fname or 'defective' in fname:
         pytest.skip()
-    if fname[-3:].lower() in {'.py', 'pyc', 'pt2', 'pt3', 'pdf', 'phd', 'png'}:
-        pytest.skip()
     with PqFile(fname) as pq:
         str(pq)
-        is_ptu = pq.magic == PqFileMagic.PTU
-    if not is_ptu:
-        pytest.skip()
-    with PtuFile(fname) as ptu:
-        str(ptu)
+        is_ptu = pq.type == PqFileType.PTU
+    if is_ptu:
+        with PtuFile(fname) as ptu:
+            str(ptu)
 
 
 @pytest.mark.parametrize(
