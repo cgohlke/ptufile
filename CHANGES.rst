@@ -1,6 +1,12 @@
 Revisions
 ---------
 
+2025.2.20
+
+- Rename PqFileMagic to PqFileType (breaking).
+- Rename PqFile.magic to PqFile.type (breaking).
+- Add PQDAT and SPQR file types.
+
 2025.2.12
 
 - Add options to specify file open modes to PqFile and PtuFile.read_records.
