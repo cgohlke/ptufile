@@ -34,7 +34,7 @@
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, and PQRES), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD 3-Clause
-:Version: 2025.2.12
+:Version: 2025.2.20
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -65,17 +65,23 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.2
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.3
 - `Xarray <https://pypi.org/project/xarray>`_ 2025.1.2 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.1.10 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.0 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.2.18 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.0.12 (build)
 
 Revisions
 ---------
+
+2025.2.20
+
+- Rename PqFileMagic to PqFileType (breaking).
+- Rename PqFile.magic to PqFile.type (breaking).
+- Add PQDAT and SPQR file types.
 
 2025.2.12
 
@@ -129,7 +135,8 @@ The PicoQuant unified file formats are documented at the
 
 The following features are currently not implemented due to the lack of
 test files or documentation: PT2 and PT3 files, decoding images from
-T2 formats, bidirectional per frame, and deprecated image reconstruction.
+T2 and SPQR formats, bidirectional per frame, and deprecated image
+reconstruction.
 
 Compatibility of written PTU files with other software is limitedly tested,
 as are decoding line, bidirectional, and sinusoidal scanning.
@@ -160,8 +167,8 @@ Examples
 Read properties and tags from any type of PicoQuant unified tagged file:
 
 >>> pq = PqFile('tests/data/Settings.pfs')
->>> pq.magic
-<PqFileMagic.PFS: ...>
+>>> pq.type
+<PqFileType.PFS: ...>
 >>> pq.guid
 UUID('86d428e2-cb0b-4964-996c-04456ba6be7b')
 >>> pq.tags
@@ -171,8 +178,8 @@ UUID('86d428e2-cb0b-4964-996c-04456ba6be7b')
 Read metadata from a PicoQuant PTU FLIM file:
 
 >>> ptu = PtuFile('tests/data/FLIM.ptu')
->>> ptu.magic
-<PqFileMagic.PTU: ...>
+>>> ptu.type
+<PqFileType.PTU: ...>
 >>> ptu.record_type
 <PtuRecordType.PicoHarpT3: 66307>
 >>> ptu.measurement_mode
@@ -269,7 +276,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.2.12'
+__version__ = '2025.2.20'
 
 __all__ = [
     '__version__',
@@ -278,7 +285,7 @@ __all__ = [
     'logger',
     'PqFile',
     'PqFileError',
-    'PqFileMagic',
+    'PqFileType',
     'PhuFile',
     'PtuFile',
     'PtuWriter',
@@ -292,6 +299,7 @@ __all__ = [
     'PtuStopReason',
     'PhuMeasurementMode',
     'PhuMeasurementSubMode',
+    'FILE_EXTENSIONS',
     'T2_RECORD_DTYPE',
     'T3_RECORD_DTYPE',
 ]
@@ -837,7 +845,7 @@ class PtuWriter:
         raise ValueError(f'invalid number of dimensions {len(shape)=}')
 
 
-class PqFileMagic(enum.Enum):
+class PqFileType(enum.Enum):
     """PicoQuant file type identifiers."""
 
     PTU = b'PQTTTR\0\0'
@@ -858,6 +866,12 @@ class PqFileMagic(enum.Enum):
     PQRES = b'PQRESLT\0'
     """Result file, PQRES, contains analysis generated during measurement."""
 
+    PQDAT = b'PQDATA\0\0'
+    """Data file, PQDAT, contains undocumented data."""
+
+    SPQR = b'PQSPQR\0\0'
+    """Unknown file, SPQR, contains undocumented data."""
+
 
 class PqFileError(Exception):
     """Exception to indicate invalid PicoQuant tagged file structure."""
@@ -866,8 +880,8 @@ class PqFileError(Exception):
 class PqFile:
     """PicoQuant unified tagged file.
 
-    PTU, PHU, PCK, PCO, PFS, PUS, and PQRES files contain measurement
-    metadata and settings encoded as unified tags.
+    PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR files contain
+    measurement metadata and settings encoded as unified tags.
 
     ``PqFile`` and subclass instances are not thread safe.
     All attributes are read-only.
@@ -891,7 +905,7 @@ class PqFile:
 
     """
 
-    magic: PqFileMagic
+    type: PqFileType
     """PicoQuant file type identifier."""
 
     version: str
@@ -906,8 +920,8 @@ class PqFile:
     _data_offset: int  # position of raw data in file
     _number_records_offset: int  # position of TTResult_NumberOfRecords value
 
-    _MAGIC: set[PqFileMagic] = set(PqFileMagic)
-    _STR_: tuple[str, ...] = ('magic', 'version')  # attributes listed first
+    _TYPE: set[PqFileType] = set(PqFileType)
+    _STR_: tuple[str, ...] = ('type', 'version')  # attributes listed first
 
     def __init__(
         self,
@@ -941,9 +955,9 @@ class PqFile:
         fh = self._fh
         magic = fh.read(8)
         try:
-            self.magic = PqFileMagic(magic)
-            if self.magic not in self._MAGIC:
-                raise ValueError(f'{self.magic} not in {self._MAGIC!r}')
+            self.type = PqFileType(magic)
+            if self.type not in self._TYPE:
+                raise ValueError(f'{self.type} not in {self._TYPE!r}')
         except Exception as exc:
             self.close()
             raise PqFileError(
@@ -976,8 +990,11 @@ class PqFile:
                 tagid = tagid_.rstrip(b'\0').decode('ascii', errors='ignore')
 
                 # tags must start on positions divisible by 8
-                # disabled for PQRES
-                if offset % 8 and self.magic != PqFileMagic.PQRES:
+                # disabled for PQRES and PQDAT
+                if offset % 8 and self.type not in {
+                    PqFileType.PQRES,
+                    PqFileType.PQDAT,
+                }:
                     logger().error(
                         errmsg(
                             f'tag {offset=} not divisible by 8',
@@ -1213,8 +1230,8 @@ class PhuFile(PqFile):
 
     """
 
-    _MAGIC: set[PqFileMagic] = {PqFileMagic.PHU}
-    _STR_ = ('magic', 'version', 'measurement_mode', 'measurement_submode')
+    _TYPE: set[PqFileType] = {PqFileType.PHU}
+    _STR_ = ('type', 'version', 'measurement_mode', 'measurement_submode')
 
     def __init__(
         self,
@@ -1408,9 +1425,9 @@ class PtuFile(PqFile):
     _dtype: numpy.dtype[Any]
     _records: NDArray[numpy.uint32] | None  # cached records
 
-    _MAGIC: set[PqFileMagic] = {PqFileMagic.PTU}
+    _TYPE: set[PqFileType] = {PqFileType.PTU}
     _STR_ = (
-        'magic',
+        'type',
         'version',
         'record_type',
         'measurement_mode',
@@ -2923,7 +2940,7 @@ class PqTagType(enum.IntEnum):
 
 
 class PtuRecordType(enum.IntEnum):
-    """TTTR record format."""
+    """TTTR record type."""
 
     PicoHarpT3 = 0x00010303
     """PicoHarp 300 T3."""
@@ -3046,13 +3063,15 @@ T3_RECORD_DTYPE = numpy.dtype(
 """Numpy dtype of decoded T3 records."""
 
 FILE_EXTENSIONS = {
-    '.ptu': PqFileMagic.PTU,
-    '.phu': PqFileMagic.PHU,
-    '.pck': PqFileMagic.PCK,
-    '.pco': PqFileMagic.PCO,
-    '.pfs': PqFileMagic.PFS,
-    '.pus': PqFileMagic.PFS,
-    '.pqres': PqFileMagic.PQRES,
+    '.ptu': PqFileType.PTU,
+    '.phu': PqFileType.PHU,
+    '.pck': PqFileType.PCK,
+    '.pco': PqFileType.PCO,
+    '.pfs': PqFileType.PFS,
+    '.pus': PqFileType.PFS,
+    '.pqres': PqFileType.PQRES,
+    '.pqdat': PqFileType.PQDAT,
+    '.spqr': PqFileType.SPQR,
 }
 """File extensions of PicoQuant tagged files."""
 
@@ -3262,7 +3281,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             with PqFile(fname) as pq:
-                if pq.magic == PqFileMagic.PTU:
+                if pq.type == PqFileType.PTU:
                     t = Timer()
                     with PtuFile(fname) as ptu:
                         t.print('   open file')
@@ -3279,7 +3298,7 @@ def main(argv: list[str] | None = None) -> int:
                             ptu.plot(verbose=True)
                         except NotImplementedError as exc:
                             print('NotImplementedError:', exc)
-                elif pq.magic == PqFileMagic.PHU:
+                elif pq.type == PqFileType.PHU:
                     with PhuFile(fname) as phu:
                         print(phu)
                         phu.plot(verbose=True)
