@@ -5,6 +5,7 @@
 # cython: wraparound = False
 # cython: cdivision = True
 # cython: nonecheck = False
+# cython: freethreading_compatible = True
 
 # Copyright (c) 2023-2025, Christoph Gohlke
 # All rights reserved.
@@ -35,12 +36,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Decode PicoQuant Time-Tagged Time-Resolved (TTTR) records.
-
-:Author: Christoph Gohlke
-:License: BSD 3-Clause
-
-"""
+"""Decode PicoQuant Time-Tagged Time-Resolved (TTTR) records."""
 
 from libc.stdint cimport int8_t, uint8_t, uint16_t, int16_t, uint32_t, uint64_t
 
