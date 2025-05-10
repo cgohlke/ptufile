@@ -41,8 +41,8 @@ PTU files contain time correlated single photon counting (TCSPC)
 measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
-:License: BSD 3-Clause
-:Version: 2025.2.20
+:License: BSD-3-Clause
+:Version: 2025.5.10
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,23 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.1.2 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.2.18 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.5
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.4.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.3 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.5.10 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.0.12 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.1.0 (build)
 
 Revisions
 ---------
+
+2025.5.10
+
+- Mark Cython extension free-threading compatible.
+- Support Python 3.14.
 
 2025.2.20
 
@@ -276,13 +281,12 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.2.20'
+__version__ = '2025.5.10'
 
 __all__ = [
     '__version__',
     'imread',
     'imwrite',
-    'logger',
     'PqFile',
     'PqFileError',
     'PqFileType',
@@ -520,7 +524,7 @@ class PtuWriter:
             File name or writable binary stream.
             File names typically end in '.PTU'.
         shape:
-            Shape of TCSPC histogram image stack two write.
+            Shape of TCSPC histogram image stack to write.
             The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
             or 'TYXH' (with `has_frames=True`).
         global_resolution:
@@ -1938,7 +1942,7 @@ class PtuFile(PqFile):
             nbins = self.number_bins
         else:
             nbins = self.number_bins_max
-        return numpy.linspace(  # type: ignore[no-any-return]
+        return numpy.linspace(
             0, nbins * self.tags['MeasDesc_Resolution'], nbins, endpoint=False
         )
 
@@ -2079,8 +2083,8 @@ class PtuFile(PqFile):
                 ``numpy.recarray`` of size :py:attr:`number_records` and dtype
                 :py:attr:`T3_RECORD_DTYPE` or :py:attr:`T2_RECORD_DTYPE`.
 
-                A channel >= 0 indicates a record contains a photon.
-                Else, the record contains an overflow event or marker > 0.
+                A channel >= 0 indicates that a record contains a photon.
+                Otherwise, the record contains an overflow event or marker > 0.
 
         """
         from ._ptufile import decode_t2_records, decode_t3_records
@@ -2459,7 +2463,9 @@ class PtuFile(PqFile):
                 if index < 0:
                     index %= shape[i]
                 if not 0 <= index < size:
-                    raise IndexError(f'axis {i} {index=} out of range')
+                    raise IndexError(
+                        f'axis {i} {index=} out of range [0, {size}]'
+                    )
                 start[i] = index
                 shape[i] = 1
                 keepaxes[i] = 0
@@ -3077,7 +3083,17 @@ FILE_EXTENSIONS = {
 
 
 def encode_tag(tagid: str, value: Any, index: int = -1, /) -> bytes:
-    """Return encoded PqTag."""
+    """Return encoded PicoQuant tag.
+
+    Parameters:
+        tagid: Tag identifier string.
+        value: Tag value to encode.
+        index: Array index for tag values, -1 for single values.
+
+    Returns:
+        Encoded tag as bytes.
+
+    """
     if value is None:
         typecode = PqTagType.Empty8
         buffer = b'\x00\x00\x00\x00\x00\x00\x00\x00'
@@ -3224,8 +3240,8 @@ def indent(*args: Any, sep: str = '', end: str = '') -> str:
 
 
 def logger() -> logging.Logger:
-    """Return logging.getLogger('ptufile')."""
-    return logging.getLogger(__name__.replace('ptufile.ptufile', 'ptufile'))
+    """Return logger for ptufile module."""
+    return logging.getLogger('ptufile')
 
 
 def askopenfilename(**kwargs: Any) -> str:
