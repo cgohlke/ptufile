@@ -14,8 +14,8 @@ PTU files contain time correlated single photon counting (TCSPC)
 measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
-:License: BSD 3-Clause
-:Version: 2025.2.20
+:License: BSD-3-Clause
+:Version: 2025.5.10
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,23 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.9, 3.13.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.1.2 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.0 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.2.18 (optional)
+- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.2.5
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.4.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.3 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.5.10 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.0.12 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.1.0 (build)
 
 Revisions
 ---------
+
+2025.5.10
+
+- Mark Cython extension free-threading compatible.
+- Support Python 3.14.
 
 2025.2.20
 
