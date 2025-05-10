@@ -1,6 +1,11 @@
 Revisions
 ---------
 
+2025.5.10
+
+- Mark Cython extension free-threading compatible.
+- Support Python 3.14.
+
 2025.2.20
 
 - Rename PqFileMagic to PqFileType (breaking).
