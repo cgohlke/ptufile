@@ -34,7 +34,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.2.20
+:Version: 2025.5.10
 
 """
 
@@ -51,7 +51,6 @@ import numpy
 import ptufile
 import ptufile.numcodecs
 import pytest
-import xarray
 from numpy.testing import assert_almost_equal, assert_array_equal
 from ptufile import (
     FILE_EXTENSIONS,
@@ -72,6 +71,17 @@ from ptufile import (
     imread,
     imwrite,
 )
+
+try:
+    import xarray
+except ImportError:
+    xarray = None  # type: ignore[assignment]
+
+try:
+    from matplotlib import pyplot
+except ImportError:
+    pyplot = None  # type: ignore[assignment]
+
 
 DATA = pathlib.Path(os.path.dirname(__file__)) / 'data'
 
@@ -106,6 +116,16 @@ def test_version():
     ver = ':Version: ' + __version__
     assert ver in __doc__
     assert ver in ptufile.__doc__
+
+
+def test_import_xarray():
+    """Assert xarray is installed."""
+    assert xarray is not None
+
+
+def test_import_matplotlib():
+    """Assert matplotlib is installed."""
+    assert pyplot is not None
 
 
 def test_non_pqfile():
@@ -267,14 +287,16 @@ def test_phu(filetype):
                 phu.tags['HistResDscr_DataOffset'],
                 [11224, 142296, 273368, 404440],
             )
-            histograms = phu.histograms(asxarray=True)
-            assert len(histograms) == 4
-            for h in histograms:
-                assert h.shape == (32768,)
-            assert histograms[2][1] == 3
-            assert_array_equal(phu.histograms(2)[0], histograms[2])
-            phu.plot(show=False, verbose=False)
-            phu.plot(show=False, verbose=True)
+            if xarray is not None:
+                histograms = phu.histograms(asxarray=True)
+                assert len(histograms) == 4
+                for h in histograms:
+                    assert h.shape == (32768,)
+                assert histograms[2][1] == 3
+                assert_array_equal(phu.histograms(2)[0], histograms[2])
+            if pyplot is not None:
+                phu.plot(show=False, verbose=False)
+                phu.plot(show=False, verbose=True)
     finally:
         if filetype is not str:
             fname.close()
@@ -296,12 +318,14 @@ def test_phu_baseres():
         assert 'HistResDscr_HWBaseResolution' not in phu.tags
         assert phu.tcspc_resolution == 1.600000075995922e-11
         assert phu.number_histograms == 42
-        histograms = phu.histograms(asxarray=True)
-        assert len(histograms) == 42
-        for h in histograms:
-            assert h.shape == (65536,)
-        phu.plot(show=False, verbose=False)
-        phu.plot(show=False, verbose=True)
+        if xarray is not None:
+            histograms = phu.histograms(asxarray=True)
+            assert len(histograms) == 42
+            for h in histograms:
+                assert h.shape == (65536,)
+        if pyplot is not None:
+            phu.plot(show=False, verbose=False)
+            phu.plot(show=False, verbose=True)
 
 
 def test_ptu_t3_image():
@@ -453,6 +477,9 @@ def test_ptu_channels():
         assert ptu.syncrate == 24999920
         assert ptu.tcspc_resolution == 7.999999968033578e-11
 
+        if xarray is None:
+            return  # skip xarray tests if not installed
+
         histogram = ptu.decode_histogram(asxarray=True)
         assert histogram.shape == (2, 501)
         assert_array_equal(histogram.coords['C'], (2, 3))
@@ -485,8 +512,9 @@ def test_ptu_channels():
         assert_array_equal(ptu.coords['C'][[0, -1]], (0, 63))
         assert_array_equal(ptu._coords_c[[0, -1]], (0, 63))
 
-        image = ptu.decode_image(asxarray=True, dtime=-1, channel=2)
-        assert_array_equal(image.coords['C'], (2,))
+        if xarray is not None:
+            image = ptu.decode_image(asxarray=True, dtime=-1, channel=2)
+            assert_array_equal(image.coords['C'], (2,))
 
 
 def test_ptu_t3_sinusoidal():
@@ -819,6 +847,8 @@ def test_ptu_decode_records(fname):
 @pytest.mark.parametrize('fname', FILES)
 def test_ptu_decode_histogram(fname, asxarray):
     """Test decode histograms."""
+    if asxarray and xarray is None:
+        pytest.skip('xarray not installed')
     with PtuFile(DATA / fname) as ptu:
         ptu.decode_histogram(asxarray=asxarray)
         # TODO: verify values
@@ -826,6 +856,7 @@ def test_ptu_decode_histogram(fname, asxarray):
             ptu.decode_histogram(dtype='int32')
 
 
+@pytest.mark.skipif(pyplot is None, reason='matplotlib not installed')
 @pytest.mark.parametrize('verbose', [False, True])
 @pytest.mark.parametrize('fname', FILES)
 def test_ptu_plot(fname, verbose):
@@ -922,6 +953,10 @@ def test_ptu_getitem():
         assert im.shape == (19, 512, 512)
         assert im.dtype == 'uint16'
         assert_array_equal(im, im0.squeeze())
+
+        if xarray is None:
+            return
+
         # slice with xarray
         ptu.use_xarray = True
         assert ptu.use_xarray
@@ -935,6 +970,7 @@ def test_ptu_getitem():
         assert isinstance(im, xarray.DataArray)
         assert im.shape == ()
         assert tuple(im.coords.keys()) == ()
+
         photons = ptu.decode_image([slice(None, None, -1)] * 5).sum()
         assert im.values == photons  # 21243427
         with pytest.raises(IndexError):
@@ -1292,6 +1328,7 @@ def test_issue_tag_index_order(caplog):
             ]
 
 
+@pytest.mark.skipif(xarray is None, reason='xarray not installed')
 @pytest.mark.parametrize(
     'dtime, size',
     [
@@ -1319,6 +1356,7 @@ def test_issue_dtime(dtime, size):
     assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
 
 
+@pytest.mark.skipif(xarray is None, reason='xarray not installed')
 def test_imread():
     """Test imread function."""
     fname = DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
@@ -1704,7 +1742,10 @@ def test_imwrite_exceptions():
 
 def test_signal_from_ptu():
     """Test PhasorPy signal_from_ptu function."""
-    from phasorpy.io import signal_from_ptu
+    try:
+        from phasorpy.io import signal_from_ptu
+    except ImportError:
+        pytest.skip('PhasorPy not installed')
 
     filename = (
         DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
@@ -1742,7 +1783,10 @@ def test_signal_from_ptu():
 
 def test_signal_from_ptu_irf():
     """Test read PhasorPy signal_from_ptu function with IRF."""
-    from phasorpy.io import signal_from_ptu
+    try:
+        from phasorpy.io import signal_from_ptu
+    except ImportError:
+        pytest.skip('PhasorPy not installed')
 
     filename = DATA / 'Samples.sptw/Cy5_diff_IRF+FLCS-pattern.ptu'
     signal = signal_from_ptu(filename)
@@ -1840,9 +1884,12 @@ def test_ptu_leica_sequence():
 def test_ptu_numcodecs():
     """Test Leica TZ-stack with tifffile.ZarrFileSequenceStore and fsspec."""
     # 410 files. Requires ~16GB.
-    import fsspec
-    import tifffile  # > 2024.2.12
-    import zarr
+    try:
+        import fsspec
+        import tifffile  # > 2024.2.12
+        import zarr
+    except ImportError:
+        pytest.skip('fsspec, tifffile, or zarr not installed')
 
     pathname = DATA / 'Flipper TR time series.sptw'
     url = str(pathname).replace('\\', '/')
