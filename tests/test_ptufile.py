@@ -34,7 +34,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.5.10
+:Version: 2025.7.30
 
 """
 
@@ -68,6 +68,8 @@ from ptufile import (
     PtuScannerType,
     PtuWriter,
     __version__,
+    binread,
+    binwrite,
     imread,
     imwrite,
 )
@@ -142,6 +144,33 @@ def test_non_ptu():
     with pytest.raises(PqFileError):
         with PtuFile(fname):
             pass
+
+
+@pytest.mark.parametrize('memmap', [False, True])
+def test_binread(memmap):
+    """Test read and write PicoQuant BIN file."""
+    fname = DATA / 'UNC/805.bin'
+    data, attrs = binread(fname, memmap=memmap)
+    assert attrs['shape'] == (256, 256, 2000)
+    assert attrs['pixel_resolution'] == 0.078125
+    assert attrs['tcspc_resolution'] == 2.5000000372529032e-11
+    assert data.shape == (256, 256, 2000)
+    assert data.dtype == numpy.uint32
+    assert numpy.sum(data) == 43071870
+
+    binwrite(
+        '_805.bin',
+        data,
+        attrs['tcspc_resolution'],
+        pixel_resolution=attrs['pixel_resolution'],
+    )
+    del data
+
+    with open(fname, 'rb') as fh:
+        data1 = fh.read()
+    with open('_805.bin', 'rb') as fh:
+        data2 = fh.read()
+    assert data1 == data2
 
 
 def test_pq_fastload():
@@ -360,10 +389,15 @@ def test_ptu_t3_image():
         assert ptu.frame_time == 0.4149549346321456
         assert ptu.frequency == 78020000.0
         assert ptu.global_frame_time == 32374784
-        assert ptu.global_line_time == 126365  # 126464
+        assert ptu.global_line_time == 126464
         assert ptu.global_pixel_time == 494
         assert ptu.global_resolution == 1.281722635221738e-8
-        assert ptu.line_time == 0.0016196488079979492
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 256
         assert ptu.number_bins == 139
         assert ptu.number_bins_in_period == 132
@@ -374,7 +408,6 @@ def test_ptu_t3_image():
         assert ptu.number_markers == 2565
         assert ptu.number_photons == 6065123
         assert ptu.number_records == 6070158
-        assert ptu.pixel_time == 6.331709817995386e-6
         assert ptu.pixels_in_frame == 65536
         assert ptu.pixels_in_line == 256
         assert ptu.syncrate == 78020000
@@ -460,7 +493,12 @@ def test_ptu_channels():
         assert ptu.global_line_time == 384000
         assert ptu.global_pixel_time == 750
         assert ptu.global_resolution == 4.00001280004096e-8
-        assert ptu.line_time == 0.015360049152157287
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 501
         assert ptu.number_bins_in_period == 500
@@ -471,7 +509,6 @@ def test_ptu_channels():
         assert ptu.number_markers == 3074
         assert ptu.number_photons == 41039565
         assert ptu.number_records == 42196537
-        assert ptu.pixel_time == 3e-5
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 24999920
@@ -553,10 +590,15 @@ def test_ptu_t3_sinusoidal():
         assert ptu.frequency == 38898320.0
         assert ptu.global_acquisition_time == 4624351232
         assert ptu.global_frame_time == 37904518
-        assert ptu.global_line_time == 18994
+        assert ptu.global_line_time == 18995
         assert ptu.global_pixel_time == 37
         assert ptu.global_resolution == 2.5708051144625268e-8
-        assert ptu.line_time == 0.0004882987234410124
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3216
         assert ptu.number_bins_in_period == 3213
@@ -568,7 +610,6 @@ def test_ptu_t3_sinusoidal():
         assert ptu.number_markers == 125050
         assert ptu.number_photons == 8664782
         assert ptu.number_records == 8860394
-        assert ptu.pixel_time == 9.511978923511349e-7
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 38898320
@@ -579,6 +620,9 @@ def test_ptu_t3_sinusoidal():
         im = ptu.decode_image(frame=-1, dtime=-1, channel=0, keepdims=False)
         assert im.shape == (512, 512)
         assert im[399, 18] == 37
+
+        with pytest.raises(ValueError):
+            ptu.decode_image(pixel_time=0)
 
 
 def test_ptu_t3_bidirectional():
@@ -620,7 +664,12 @@ def test_ptu_t3_bidirectional():
         assert ptu.global_line_time == 3200000
         assert ptu.global_pixel_time == 3125
         assert ptu.global_resolution == 4.00001280004096e-8
-        assert ptu.line_time == 0.12800040960131073
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 1024
         assert ptu.number_bins == 502
         assert ptu.number_bins_in_period == 500
@@ -632,7 +681,6 @@ def test_ptu_t3_bidirectional():
         assert ptu.number_markers == 2049
         assert ptu.number_photons == 239232451
         assert ptu.number_records == 242488255
-        assert ptu.pixel_time == 0.000125
         assert ptu.pixels_in_frame == 1048576
         assert ptu.pixels_in_line == 1024
         assert ptu.syncrate == 24999920
@@ -704,7 +752,12 @@ def test_ptu_t3_bidirectional_sinusoidal():
         assert ptu.global_line_time == 9534
         assert ptu.global_pixel_time == 19
         assert ptu.global_resolution == 5.138978535514453e-8
-        assert ptu.line_time == 0.0004899502135759479
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3212
         assert ptu.number_bins_in_period == 3211
@@ -716,7 +769,6 @@ def test_ptu_t3_bidirectional_sinusoidal():
         assert ptu.number_markers == 27341
         assert ptu.number_photons == 5585391
         assert ptu.number_records == 5617095
-        assert ptu.pixel_time == 9.764059217477461e-7
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 19459120
@@ -796,7 +848,12 @@ def test_ptu_t3_point():
         assert ptu.global_line_time == 39999
         assert ptu.global_pixel_time == 39999
         assert ptu.global_resolution == 2.5000900032401165e-8
-        assert ptu.line_time == 0.0010000110003960143
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 1
         assert ptu.number_bins == 1564
         assert ptu.number_bins_in_period == 1562
@@ -807,7 +864,6 @@ def test_ptu_t3_point():
         assert ptu.number_markers == 0
         assert ptu.number_photons == 11516799
         assert ptu.number_records == 11553418
-        assert ptu.pixel_time == 0.0010000110003960143
         assert ptu.pixels_in_frame == 1
         assert ptu.pixels_in_line == 1
         assert ptu.syncrate == 39998560
@@ -1032,7 +1088,12 @@ def test_issue_falcon_point():
         assert ptu.global_line_time == 312500
         assert ptu.global_pixel_time == 312500
         assert ptu.global_resolution == 3.2e-9
-        assert ptu.line_time == 0.001
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 1
         assert ptu.number_bins == 269
         assert ptu.number_bins_in_period == 32
@@ -1043,7 +1104,6 @@ def test_issue_falcon_point():
         assert ptu.number_markers == 0
         assert ptu.number_photons == 1016546
         assert ptu.number_records == 1090355
-        assert ptu.pixel_time == 0.001
         assert ptu.pixels_in_frame == 1
         assert ptu.pixels_in_line == 1
         assert ptu.syncrate == 0
@@ -1087,7 +1147,12 @@ def test_issue_skip_frame():
         assert ptu.global_line_time == 20480
         assert ptu.global_pixel_time == 40
         assert ptu.global_resolution == 1.0000310009610297e-7
-        assert ptu.line_time == 0.002048063489968189
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 4096
         assert ptu.number_bins_in_period == 6250  # > number_bins_max !
@@ -1098,7 +1163,6 @@ def test_issue_skip_frame():
         assert ptu.number_markers == 102509
         assert ptu.number_photons == 32976068
         assert ptu.number_records == 33105274
-        assert ptu.pixel_time == 4.000124003844119e-6
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 9999690
@@ -1135,6 +1199,7 @@ def test_issue_marker_order():
 
         assert ptu._info.skip_first_frame == 0
         assert ptu._info.skip_last_frame == 0
+        assert ptu._info.lines == 97596
 
         assert ptu.frame_change_mask == 4
         assert ptu.line_start_mask == 1
@@ -1147,7 +1212,12 @@ def test_issue_marker_order():
         assert ptu.global_line_time == 20446
         assert ptu.global_pixel_time == 40
         assert ptu.global_resolution == 4.99959578268097e-8
-        assert ptu.line_time == 0.0010222173537269511
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 3126
         assert ptu.number_bins_in_period == 3124
@@ -1158,7 +1228,6 @@ def test_issue_marker_order():
         assert ptu.number_markers == 195384
         assert ptu.number_photons == 17601306
         assert ptu.number_records == 17861964
-        assert ptu.pixel_time == 1.999838313072388e-6
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 20001617
@@ -1216,8 +1285,10 @@ def test_issue_empty_line():
         assert ptu.number_markers == 513
         assert ptu.number_photons == 722402
         assert ptu.number_records == 723240
-        assert ptu.global_pixel_time == 324
-        assert ptu.pixel_time == 4.1527813381184314e-6
+        assert ptu.global_pixel_time == 325  # 324
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
 
         assert ptu.decode_records()['marker'][0] == 1  # start marker
         assert ptu[0, 0, 100, 0, ::-1] == 40  # first line not empty
@@ -1258,7 +1329,12 @@ def test_issue_pixeltime_zero():
         assert ptu.global_line_time == 81920
         assert ptu.global_pixel_time == 160
         assert ptu.global_resolution == 2.4999450012099732e-8
-        assert ptu.line_time == 0.00204795494499121
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
         assert ptu.lines_in_frame == 512
         assert ptu.number_bins == 2510
         assert ptu.number_bins_in_period == 2499
@@ -1269,7 +1345,6 @@ def test_issue_pixeltime_zero():
         assert ptu.number_markers == 11009
         assert ptu.number_photons == 37047472
         assert ptu.number_records == 37748736
-        assert ptu.pixel_time == 3.999912001935957e-6
         assert ptu.pixels_in_frame == 262144
         assert ptu.pixels_in_line == 512
         assert ptu.syncrate == 40000880
@@ -1281,6 +1356,92 @@ def test_issue_pixeltime_zero():
         assert im.shape == (512, 512)
         assert im.dtype == numpy.uint32
         assert im[281, 373] == 25
+
+        im = ptu.decode_image(
+            9, channel=0, dtime=-1, pixel_time=0, keepdims=False, dtype='u4'
+        )
+        assert im.shape == (512, 512)
+        assert im.dtype == numpy.uint32
+        assert im[281, 373] == 25
+
+
+def test_issue_pixeltime_off():
+    """Test PTU with ImgHdr_TimePerPixel metadata slightly off."""
+    fname = DATA / 'UNC/805_1.ptu'
+    with PtuFile(fname) as ptu:
+        assert ptu.version == '1.0.00'
+        assert ptu.type == PqFileType.PTU
+        assert ptu.record_type == PtuRecordType.TimeHarp260PT3
+        assert ptu.measurement_mode == PtuMeasurementMode.T3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.PI_E727
+        assert ptu.measurement_ndim == 3
+
+        assert ptu.tags['ImgHdr_TimePerPixel'] == 2.0  # slightly off
+        assert ptu.global_pixel_time == 40000
+
+        assert ptu.shape == (1, 256, 256, 2, 2002)
+        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (0, 1)
+
+        assert ptu._info.line_time == 10232923
+        assert ptu._info.skip_first_frame == 0
+        assert ptu._info.skip_last_frame == 0
+
+        assert ptu.frame_change_mask == 0  # !
+        assert ptu.line_start_mask == 4
+        assert ptu.line_stop_mask == 8
+
+        assert ptu.acquisition_time == 172.07485649999998
+        assert ptu.frame_time == 172.07485649999998
+        assert ptu.frequency == 20000000.0
+        assert ptu.global_frame_time == 3441497130
+        assert ptu.global_line_time == 10240000
+        assert ptu.global_pixel_time == 40000
+        assert ptu.global_resolution == 5e-08
+        assert ptu.pixel_time == pytest.approx(
+            ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.line_time == pytest.approx(
+            ptu.global_line_time * ptu.global_resolution, rel=1e-3
+        )
+        assert ptu.lines_in_frame == 256
+        assert ptu.number_bins == 2002
+        assert ptu.number_bins_in_period == 1999
+        assert ptu.number_bins_max == 32768
+        assert ptu.number_channels == 2
+        assert ptu.number_channels_max == 64
+        assert ptu.number_lines == 256
+        assert ptu.number_markers == 512
+        assert ptu.number_photons == 56142925
+        assert ptu.number_records == 59504234
+        assert ptu.pixels_in_frame == 65536
+        assert ptu.pixels_in_line == 256
+        assert ptu.syncrate == 20000000
+        assert ptu.tcspc_resolution == 2.50000003337858e-11
+
+        data = binread(DATA / 'UNC/805.bin')[0].sum(axis=-1, dtype=numpy.int32)
+
+        # use pixel time from metadata
+        im = ptu.decode_image(channel=1, frame=0, keepdims=False)
+        im = im[..., :2000].sum(axis=-1, dtype=numpy.int32)
+        assert numpy.abs(im - data).max() == 298
+
+        # use pixel time from average line time
+        im = ptu.decode_image(
+            channel=1,
+            frame=0,
+            pixel_time=ptu._info.line_time / 256 * ptu.global_resolution,
+            keepdims=False,
+        )
+        im = im[..., :2000].sum(axis=-1, dtype=numpy.int32)
+        assert numpy.abs(im - data).max() == 8
+
+        # use pixel time from line markers
+        im = ptu.decode_image(channel=1, frame=0, pixel_time=0, keepdims=False)
+        im = im[..., :2000].sum(axis=-1, dtype=numpy.int32)
+        assert numpy.abs(im - data).max() == 8
 
 
 def test_issue_number_records_zero(caplog):
@@ -1356,6 +1517,27 @@ def test_issue_dtime(dtime, size):
     assert tuple(im.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
 
 
+def test_issue_line_markers():
+    """Test nonsense line markers."""
+    # This file apparently omits line stop markers if no photons were
+    # recorded in the line.
+    # The line stop markers don't match the timing expected from pixel time
+    # and number of pixels in lines.
+    # There are many more lines than expected from the frame height.
+    # In conclusion, the line time from the `info` object is not reliable.
+
+    fname = DATA / 'Tutorials.sptw/MicroBeads.ptu'
+    with PtuFile(fname) as ptu:
+        str(ptu)
+        assert ptu._info.lines == 300
+        assert ptu._info.line_time == 9000  # should be 18000
+        assert ptu.global_line_time == 18000
+
+        data = ptu.decode_image(pixel_time=0)
+        assert data.shape == (2, 150, 150, 2, 626)
+        assert data.sum(dtype=numpy.uint32) == 778696
+
+
 @pytest.mark.skipif(xarray is None, reason='xarray not installed')
 def test_imread():
     """Test imread function."""
@@ -1366,6 +1548,7 @@ def test_imread():
         channel=0,
         frame=None,
         dtime=0,
+        pixel_time=0,
         dtype=numpy.uint8,
         asxarray=True,
     )
@@ -1452,6 +1635,12 @@ def test_imwrite(record_type, pixel_time, shape, counts):
         assert ptu.shape == data.shape
         assert str(ptu.guid) == guid[1:-1]
 
+        assert ptu.global_resolution == 4e-8
+        if pixel_time is not None:
+            assert ptu.pixel_time == pixel_time
+            assert ptu.global_line_time == pixel_time / 4e-8 * shape[2]
+            assert ptu._info.line_time == ptu.global_line_time
+
         assert ptu.tags['ImgHdr_MaxFrames'] == shape[0]
         assert ptu.tags['HW_InpChannels'] == shape[3] + 1
         assert ptu.tags['ImgHdr_PixResol'] == 0.5
@@ -1460,8 +1649,9 @@ def test_imwrite(record_type, pixel_time, shape, counts):
         assert ptu.tags['TTResult_MDescWarningFlags'] == 2
 
         data2 = ptu.decode_image()
-
-    numpy.testing.assert_array_equal(data2, data)
+        numpy.testing.assert_array_equal(data2, data)
+        data2 = ptu.decode_image(pixel_time=0.0)
+        numpy.testing.assert_array_equal(data2, data)
 
 
 @pytest.mark.parametrize(
@@ -1470,83 +1660,87 @@ def test_imwrite(record_type, pixel_time, shape, counts):
 def test_imwrite_rewrite(record_type):
     """Test imwrite function with real data."""
     fname = DATA / 'Tutorials.sptw/Kidney _Cell_FLIM.ptu'
-    with PtuFile(fname) as ptu:
-        guid = ptu.guid
-        datetime = ptu.datetime
-        comment = ptu.comment
-        data = ptu.decode_image()
-    assert data.shape == (3, 512, 512, 2, 501)
 
     buf = io.BytesIO()
-    imwrite(
-        buf,
-        data,
-        global_resolution=4.00001280004096e-8,
-        tcspc_resolution=7.999999968033578e-11,
-        record_type=record_type,
-        pixel_time=3e-5,
-        pixel_resolution=0.504453125,
-        guid=guid,
-        datetime=datetime,
-        comment=comment,
-        tags={'File_RawData_GUID': [guid]},
-    )
-    buf.seek(0)
+    with PtuFile(fname) as ptu0:
+        data = ptu0.decode_image()
+        assert data.shape == (3, 512, 512, 2, 501)
 
-    with PtuFile(buf) as ptu:
-        str(ptu)
-        assert ptu.version == '1.0.00'
-        assert ptu.type == PqFileType.PTU
-        assert ptu.record_type == record_type
-        assert ptu.measurement_mode == PtuMeasurementMode.T3
-        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
-        assert ptu.scanner == PtuScannerType.LSM
-        assert ptu.measurement_ndim == 3
-        assert ptu.is_image
-        assert ptu.is_t3
-        assert ptu.shape == (3, 512, 512, 2, 501)
-        assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
-        assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
-        assert ptu.active_channels == (0, 1)
-        assert_array_equal(ptu.coords['C'], (0, 1))
-        # TODO: verify coords
-
-        assert ptu.guid == guid
-        assert ptu.comment == comment
-        assert ptu.datetime == datetime
-
-        assert ptu.line_start_mask == 1
-        assert ptu.line_stop_mask == 2
-        assert ptu.frame_change_mask == 4
-
-        assert ptu.acquisition_time == 23.593035497713593
-        assert ptu.frame_time == 7.864345165904531
-        assert ptu.frequency == 24999920.0
-        assert ptu.global_frame_time == 196608000
-        assert ptu.global_line_time == 384000
-        assert ptu.global_pixel_time == 750
-        assert ptu.global_resolution == 4.00001280004096e-8
-        assert ptu.line_time == 0.015360049152157287
-        assert ptu.lines_in_frame == 512
-        assert ptu.number_bins == 501
-        assert ptu.number_bins_in_period == 500
-        assert ptu.number_channels == 2
-        assert ptu.number_lines == 1536
-        assert ptu.number_markers == 3075
-        assert ptu.number_photons == 21104781
-        assert ptu.number_records in {21116856, 21683856}
-        assert ptu.pixel_time == pytest.approx(3e-5)
-        assert ptu.pixels_in_frame == 262144
-        assert ptu.pixels_in_line == 512
-        assert ptu.syncrate == 24999920
-        assert ptu.tcspc_resolution == 7.999999968033578e-11
-
-        assert ptu.tags['File_RawData_GUID'][0] == (
-            '{b767c46e-9693-4ad9-9fcf-7fab5e4377fc}'
+        imwrite(
+            buf,
+            data,
+            global_resolution=ptu0.global_resolution,  # 4.00001280004096e-8
+            tcspc_resolution=ptu0.tcspc_resolution,  # 7.999999968033578e-11
+            record_type=record_type,
+            pixel_time=ptu0.pixel_time,  # 3e-5
+            pixel_resolution=ptu0.tags['ImgHdr_PixResol'],  # 0.504453125
+            guid=ptu0.guid,
+            datetime=ptu0.datetime,
+            comment=ptu0.comment,
+            tags={'File_RawData_GUID': [ptu0.guid]},
         )
-        assert ptu.tags['ImgHdr_PixResol'] == 0.504453125
+        buf.seek(0)
 
-        data2 = ptu.decode_image()
+        with PtuFile(buf) as ptu:
+            str(ptu)
+            assert ptu.version == '1.0.00'
+            assert ptu.type == PqFileType.PTU
+            assert ptu.record_type == record_type
+            assert ptu.measurement_mode == PtuMeasurementMode.T3
+            assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+            assert ptu.scanner == PtuScannerType.LSM
+            assert ptu.measurement_ndim == 3
+            assert ptu.is_image
+            assert ptu.is_t3
+            assert ptu.shape == (3, 512, 512, 2, 501)
+            assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+            assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+            assert ptu.active_channels == (0, 1)
+            assert_array_equal(ptu.coords['C'], (0, 1))
+            # TODO: verify coords
+
+            assert ptu.guid == ptu0.guid
+            assert ptu.comment == ptu0.comment
+            assert ptu.datetime == ptu0.datetime
+
+            assert ptu.line_start_mask == 1
+            assert ptu.line_stop_mask == 2
+            assert ptu.frame_change_mask == 4
+
+            assert ptu._info.line_time == 384000
+
+            assert ptu.acquisition_time == 23.593035497713593
+            assert ptu.frame_time == 7.864345165904531
+            assert ptu.frequency == 24999920.0
+            assert ptu.global_frame_time == 196608000
+            assert ptu.global_line_time == 384000
+            assert ptu.global_pixel_time == 750
+            assert ptu.global_resolution == 4.00001280004096e-8
+            assert ptu.pixel_time == pytest.approx(
+                ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
+            )
+            assert ptu.line_time == pytest.approx(
+                ptu.global_line_time * ptu.global_resolution, rel=1e-3
+            )
+            assert ptu.lines_in_frame == 512
+            assert ptu.number_bins == 501
+            assert ptu.number_bins_in_period == 500
+            assert ptu.number_channels == 2
+            assert ptu.number_lines == 1536
+            assert ptu.number_markers == 3075
+            assert ptu.number_photons == data.sum(dtype=numpy.uint32)
+            assert ptu.number_records in {21116856, 21683856}
+            assert ptu.pixels_in_frame == 262144
+            assert ptu.pixels_in_line == 512
+            assert ptu.syncrate == 24999920
+            assert ptu.tcspc_resolution == 7.999999968033578e-11
+
+            assert ptu.tags['File_RawData_GUID'][0] == (
+                '{b767c46e-9693-4ad9-9fcf-7fab5e4377fc}'
+            )
+            assert ptu.tags['ImgHdr_PixResol'] == 0.504453125
+
+            data2 = ptu.decode_image()
 
     numpy.testing.assert_array_equal(data2, data)
 
@@ -1789,7 +1983,7 @@ def test_signal_from_ptu_irf():
         pytest.skip('PhasorPy not installed')
 
     filename = DATA / 'Samples.sptw/Cy5_diff_IRF+FLCS-pattern.ptu'
-    signal = signal_from_ptu(filename)
+    signal = signal_from_ptu(filename, channel=None, keepdims=True)
     assert signal.values.sum(dtype=numpy.uint64) == 13268548
     assert signal.dtype == numpy.uint32
     assert signal.shape == (1, 1, 1, 2, 6250)
@@ -1885,9 +2079,10 @@ def test_ptu_numcodecs():
     """Test Leica TZ-stack with tifffile.ZarrFileSequenceStore and fsspec."""
     # 410 files. Requires ~16GB.
     try:
-        import fsspec
-        import tifffile  # > 2024.2.12
+        import tifffile
+        import tifffile.zarr
         import zarr
+        from kerchunk.utils import refs_as_store
     except ImportError:
         pytest.skip('fsspec, tifffile, or zarr not installed')
 
@@ -1906,12 +2101,14 @@ def test_ptu_numcodecs():
             frame=0,
             channel=0,
             dtime=-1,
+            pixel_time=None,
             dtype='uint8',  # request uint8 output
+            trimdims=None,
             keepdims=False,
         ),
         aszarr=True,
     )
-    assert isinstance(store, tifffile.ZarrFileSequenceStore)
+    assert isinstance(store, tifffile.zarr.ZarrFileSequenceStore)
     store.write_fsspec(
         jsonfile,
         url=url,
@@ -1920,15 +2117,9 @@ def test_ptu_numcodecs():
         quote=False,
     )
     store.close()
-    mapper = fsspec.get_mapper(
-        'reference://',
-        fo=jsonfile,
-        target_protocol='file',
-        remote_protocol='file',
-    )
 
     ptufile.numcodecs.register_codec()
-    stack = zarr.open(mapper, mode='r')
+    stack = zarr.open(refs_as_store(jsonfile), mode='r')
     assert stack.shape == (41, 10, 512, 512)
     assert stack.dtype == 'uint8'
     assert stack[24, 4, 228, 279] == 18
