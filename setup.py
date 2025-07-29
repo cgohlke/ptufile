@@ -122,11 +122,17 @@ setup(
     packages=['ptufile'],
     package_data={'ptufile': ['py.typed']},
     entry_points={'console_scripts': ['ptufile = ptufile.__main__:main']},
-    python_requires='>=3.10',
+    python_requires='>=3.11',
     install_requires=['numpy'],
     setup_requires=['setuptools', 'numpy'],
     extras_require={
-        'all': ['xarray', 'tifffile', 'matplotlib', 'python-dateutil']
+        'all': [
+            'xarray',
+            'tifffile',
+            'matplotlib',
+            'python-dateutil',
+            'numcodecs',
+        ],
     },
     ext_modules=ext_modules,
     zip_safe=False,
@@ -138,7 +144,6 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Cython',
         'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
         'Programming Language :: Python :: 3.13',
