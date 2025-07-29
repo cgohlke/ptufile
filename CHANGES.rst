@@ -1,6 +1,12 @@
 Revisions
 ---------
 
+2025.7.30
+
+- Add option to specify pixel time for decoding images.
+- Add functions to read and write PicoQuant BIN files.
+- Drop support for Python 3.10.
+
 2025.5.10
 
 - Mark Cython extension free-threading compatible.
