@@ -38,7 +38,17 @@
 
 """Decode PicoQuant Time-Tagged Time-Resolved (TTTR) records."""
 
-from libc.stdint cimport int8_t, uint8_t, uint16_t, int16_t, uint32_t, uint64_t
+from libc.math cimport round
+from libc.stdint cimport (
+    UINT64_MAX,
+    int8_t,
+    int16_t,
+    uint8_t,
+    uint16_t,
+    uint32_t,
+    uint64_t,
+)
+
 
 cdef packed struct t2_t:
     uint64_t time
@@ -132,7 +142,7 @@ def decode_info(
     const uint32_t line_start,
     const uint32_t line_stop,
     const uint32_t frame_change,
-    const ssize_t lines_in_frame,
+    const ssize_t lines_in_frame,  # may be zero to disable frame trimming
 ):
     """Return information about PicoQuant TTTR records."""
     cdef:
@@ -157,7 +167,7 @@ def decode_info(
     with nogil:
         skip_first_frame = 0
         skip_last_frame = 0
-        time_line_start = 0
+        time_line_start = UINT64_MAX
         time_in_lines = 0
         channels_active = 0
         overflow = 0
@@ -179,35 +189,47 @@ def decode_info(
                 &ispecial
             )
             if ispecial == 0:
+                # photon record
                 nphotons += 1
                 if ichannel < maxchannels:
                     channels_active |= (<uint64_t> 1) << ichannel
                 if idtime > nbins and idtime < maxbins:
                     nbins = idtime
             elif ispecial == 2:
+                # marker record
                 nmarkers += 1
                 if imarker & frame_change:
+                    # frame marker
                     if lines_in_frame > y + 1:
+                        # not enough lines in frame
                         if nframes == 1:
                             skip_first_frame = 1
                         else:
                             skip_last_frame = 1
                     else:
                         skip_last_frame = 0
-                    time_line_start = 0
+                    if not imarker & line_stop:
+                        time_line_start = UINT64_MAX
                     y = 0
                 if imarker & line_stop:
-                    if time_line_start > 0:
+                    # line stop marker
+                    if (
+                        time_line_start != UINT64_MAX
+                        and (lines_in_frame == 0 or lines_in_frame >= y)
+                    ):
                         time_in_lines += (overflow + itime) - time_line_start
-                    time_line_start = 0
+                    time_line_start = UINT64_MAX
                 if imarker & line_start:
+                    # line start marker
+                    # TODO: add to time_in_lines if previous line did not stop?
                     time_line_start = overflow + itime
-                    nlines += 1
                     if y == 0:
                         # new frame starts at first line
                         # after start or frame change marker
                         nframes += 1
                     y += 1
+                    if lines_in_frame == 0 or lines_in_frame >= y:
+                        nlines += 1
 
         channels_active_first = 64
         channels_active_last = 0
@@ -247,6 +269,13 @@ def decode_info(
             if skip_last_frame and nframes > 0:
                 nframes -= 1
 
+    if nlines > 0:
+        time_in_lines = <ssize_t> (
+            round(<double> time_in_lines / <double> nlines)
+        )
+    else:
+        time_in_lines = 0
+
     return (
         format,
         nrecords,
@@ -262,7 +291,7 @@ def decode_info(
         nbins,
         skip_first_frame,
         skip_last_frame,
-        time_in_lines // nlines if nlines > 0 else 0,
+        time_in_lines,
         overflow + itime
     )
 
@@ -468,8 +497,9 @@ def decode_t3_image(
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
-    const ssize_t pixel_time,  # average global time spent in pixel
-    const ssize_t line_time,  # global time spent in one line
+    const ssize_t pixels_in_line,
+    ssize_t pixel_time,  # average global time spent in pixel
+    ssize_t line_time,  # global time spent in one line
     const uint16_t[::1] pixel_at_time,  # global time in line to pixel index
     const uint32_t line_start,  # mask
     const uint32_t line_stop,  # mask
@@ -494,11 +524,15 @@ def decode_t3_image(
         ssize_t sizec, sizet, sizey, sizex, sizeh
         ssize_t stopc, stopt, stopy, stopx, stoph
         ssize_t nrecords = records.size
-        ssize_t i, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
-        uint64_t overflow, time_global, time_line_start
+        ssize_t i, j, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
+        uint64_t overflow, overflowj, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
         decode_func_t decode_func
+        bint scanline = pixel_time <= 0 or line_time <= 0
+
+    if scanline and pixels_in_line <= 0:
+        raise ValueError(f'invalid {pixels_in_line=}')
 
     if sinusoidal and pixel_at_time.size != line_time:
         raise ValueError(f'invalid {pixel_at_time.size=} != {line_time=}')
@@ -531,7 +565,7 @@ def decode_t3_image(
     bidiv = starty % 2
 
     with nogil:
-        time_line_start = 0
+        time_line_start = UINT64_MAX
         overflow = 0
         iframe = -2 if skip_first_frame else -1
         iframe_binned = -1
@@ -541,6 +575,8 @@ def decode_t3_image(
 
         # TODO: process channels/frames in parallel?
         for i in range(nrecords):
+            ispecial = 3
+
             decode_func(
                 records[i],
                 &itime,
@@ -550,12 +586,12 @@ def decode_t3_image(
                 &imarker,
                 &ispecial
             )
-            # +1 because line start marker may be in first record
-            time_global = overflow + itime + 1
+            time_global = overflow + itime
+
             if ispecial == 0:
                 # regular record
                 if (
-                    time_line_start == 0  # no line start marker yet
+                    time_line_start == UINT64_MAX  # no line start marker yet
                     or ichannel < startc
                     or ichannel >= stopc
                     or idtime < starth
@@ -596,10 +632,10 @@ def decode_t3_image(
             elif ispecial == 2:
                 # marker
                 if imarker & frame_change:
-                    time_line_start = 0
+                    time_line_start = UINT64_MAX
                     iy = -1
                 if imarker & line_stop:
-                    time_line_start = 0
+                    time_line_start = UINT64_MAX
                 if imarker & line_start:
                     iy += 1
                     if iy == 0:
@@ -613,11 +649,44 @@ def decode_t3_image(
                         time_line_start = time_global
                         if iframe_binned != (iframe - startt) // bint:
                             iframe_binned = (iframe - startt) // bint
-                            # -1 because time_global is one-based
-                            times[iframe_binned] = time_line_start - 1
+                            times[iframe_binned] = time_line_start
+                        if scanline:
+                            # scan line to next marker to determine
+                            # line_time and pixel_time
+                            overflowj = overflow
+                            j = i + 1
+                            while True:
+                                if j >= nrecords:
+                                    break
+                                decode_func(
+                                    records[j],
+                                    &itime,
+                                    &idtime,
+                                    &ichannel,
+                                    &overflowj,
+                                    &imarker,
+                                    &ispecial
+                                )
+                                time_global = overflowj + itime
+                                if ispecial == 2:
+                                    # any marker
+                                    break
+                                j += 1
+                            line_time = <ssize_t> (
+                                time_global - time_line_start
+                            )
+                            # pixel_time = <ssize_t> round(
+                            #     <double> line_time / <double> pixels_in_line
+                            # )
+                            pixel_time = line_time // pixels_in_line
+                            pixel_time = pixel_time if pixel_time > 0 else 1
                     else:
                         # line is not part of selection
-                        time_line_start = 0
+                        time_line_start = UINT64_MAX
+
+            elif ispecial != 1:
+                with gil:
+                    raise ValueError(f'invalid records[{i}]={records[i]}')
 
 
 def decode_t3_histogram(
@@ -907,7 +976,7 @@ cdef void decode_ht3(
                 overflow[0] += 1024
             else:
                 overflow[0] += time[0] * 1024
-        if tmp > 0 and tmp < 16:
+        elif 0 < tmp < 16:
             # marker
             special[0] = 2
             marker[0] = tmp
@@ -937,7 +1006,7 @@ cdef void decode_ht3v1(
             # overflow
             special[0] = 1
             overflow[0] += 1024
-        if tmp > 0 and tmp < 16:
+        elif 0 < tmp < 16:
             # marker
             special[0] = 2
             marker[0] = tmp
@@ -970,7 +1039,7 @@ cdef void decode_ht2(
                 overflow[0] += 33554432
             else:
                 overflow[0] += time[0] * 33554432
-        if tmp == 0:
+        elif tmp == 0:
             # regular record
             special[0] = 0
             channel[0] = 0
@@ -1004,7 +1073,7 @@ cdef void decode_ht2v1(
             # overflow
             special[0] = 1
             overflow[0] += 33552000
-        if tmp == 0:
+        elif tmp == 0:
             # regular record
             special[0] = 0
             channel[0] = 0
@@ -1142,6 +1211,7 @@ cdef uint32_t encode_pt3(
     if marker != 0:
         # dtime is marker
         record |= marker << <uint32_t> 16
+        # record |= (marker & 0xfff) << <uint32_t> 16
         # all channel bits set
         record |= <uint32_t> 0xf0000000
     elif overflow != 0:
@@ -1150,8 +1220,10 @@ cdef uint32_t encode_pt3(
     else:
         # 12 bit dtime
         record |= dtime << <uint32_t> 16
+        # record |= (dtime & 0xfff) << <uint32_t> 16
         # 4 bit channel, one-based
         record |= (channel + 1) << <uint32_t> 28
+        # record |= ((channel + 1) & 0xf) << <uint32_t> 28
     return record
 
 
