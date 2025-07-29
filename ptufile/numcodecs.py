@@ -64,6 +64,7 @@ class Ptu(Codec):  # type: ignore[misc]
         channel: int | None = None,
         frame: int | None = None,
         dtime: int | None = None,
+        pixel_time: float | None = None,
         trimdims: str | None = None,
         keepdims: bool = True,
     ):
@@ -75,6 +76,7 @@ class Ptu(Codec):  # type: ignore[misc]
         self.channel = channel
         self.frame = frame
         self.dtime = dtime
+        self.pixel_time = pixel_time
         self.trimdims = trimdims
         self.keepdims = bool(keepdims)
 
@@ -85,13 +87,14 @@ class Ptu(Codec):  # type: ignore[misc]
     def decode(self, buf: bytes, out: Any | None = None) -> NDArray[Any]:
         """Return decoded image as NumPy array."""
         with BytesIO(buf) as fh:
-            with PtuFile(fh) as ptu:
+            with PtuFile(fh, trimdims=self.trimdims) as ptu:
                 result = ptu.decode_image(
                     self.selection,
                     dtype=self.dtype,
                     channel=self.channel,
                     frame=self.frame,
                     dtime=self.dtime,
+                    pixel_time=self.pixel_time,
                     keepdims=self.keepdims,
                 )
         return result
