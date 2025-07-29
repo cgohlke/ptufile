@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.5.10
+:Version: 2025.7.30
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,24 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.5
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.4.0 (recommended)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.5, 3.14.0rc 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.7.1 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.3 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.5.10 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.6.11 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.1.0 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.1.2 (build)
 
 Revisions
 ---------
+
+2025.7.30
+
+- Add option to specify pixel time for decoding images.
+- Add functions to read and write PicoQuant BIN files.
+- Drop support for Python 3.10.
 
 2025.5.10
 
@@ -143,8 +149,8 @@ test files or documentation: PT2 and PT3 files, decoding images from
 T2 and SPQR formats, bidirectional per frame, and deprecated image
 reconstruction.
 
-Compatibility of written PTU files with other software is limitedly tested,
-as are decoding line, bidirectional, and sinusoidal scanning.
+Compatibility of written PTU files with other software is limited,
+as is decoding line, bidirectional, and sinusoidal scanning.
 
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
@@ -281,10 +287,12 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.5.10'
+__version__ = '2025.7.30'
 
 __all__ = [
     '__version__',
+    'binread',
+    'binwrite',
     'imread',
     'imwrite',
     'PqFile',
@@ -345,6 +353,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    pixel_time: float | None = None,
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
@@ -363,6 +372,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    pixel_time: float | None = None,
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
@@ -381,6 +391,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    pixel_time: float | None = None,
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
@@ -398,6 +409,7 @@ def imread(
     channel: int | None = None,
     frame: int | None = None,
     dtime: int | None = None,
+    pixel_time: float | None = None,
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
@@ -409,8 +421,8 @@ def imread(
     Parameters:
         file:
             File name or seekable binary stream.
-        selection, dtype, channel, frame, dtime, bishift, keepdims, asxarray,\
-        out:
+        selection, dtype, channel, frame, dtime, pixel_time, bishift,\
+        keepdims, asxarray, out:
             Passed to :py:meth:`PtuFile.decode_image`.
         trimdims:
             Passed to :py:class:`PtuFile`.
@@ -428,6 +440,7 @@ def imread(
             frame=frame,
             dtime=dtime,
             bishift=bishift,
+            pixel_time=pixel_time,
             keepdims=keepdims,
             asxarray=asxarray,
             out=out,
@@ -795,7 +808,7 @@ class PtuWriter:
             int(2 ** (self._frame_change - 1)),
         )
         if number_records < 0:
-            raise ValueError(f'{records.size=} too small')
+            raise ValueError(f'{records.size=} < 0')
 
         assert self._fh is not None
         self._fh.write(records[:number_records].tobytes())
@@ -2076,7 +2089,7 @@ class PtuFile(PqFile):
                 If a ``numpy.ndarray``, a writable recarray of compatible
                 shape and dtype.
                 If a ``file name`` or ``open file``, create a
-                memory-mapped array in specified file.
+                memory-mapped array in the specified file.
 
         Returns:
             :
@@ -2260,6 +2273,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        pixel_time: float | None = None,
         bishift: int | None = None,
         keepdims: bool = True,
         asxarray: Literal[False] = ...,
@@ -2277,6 +2291,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        pixel_time: float | None = None,
         bishift: int | None = None,
         keepdims: bool = True,
         asxarray: Literal[True] = ...,
@@ -2294,6 +2309,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        pixel_time: float | None = None,
         bishift: int | None = None,
         keepdims: bool = True,
         asxarray: bool = ...,
@@ -2310,6 +2326,7 @@ class PtuFile(PqFile):
         frame: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
+        pixel_time: float | None = None,
         bishift: int | None = None,
         keepdims: bool = True,
         asxarray: bool = False,
@@ -2349,6 +2366,11 @@ class PtuFile(PqFile):
                 If < 0, integrate delay time axis.
                 If > 0, return up to specified bin.
                 Overrides ``selection`` for axis ``H``.
+            pixel_time: float, optional
+                Time per pixel in s.
+                If zero, determine pixel times per line from line scan markers
+                (cannot be used with bidirectional or line scans).
+                The default is :py:attr:`PtuFile.pixel_time`.
             bishift:
                 Global time shift of odd vs. even lines in bidirectional mode.
                 The default is zero.
@@ -2506,10 +2528,28 @@ class PtuFile(PqFile):
             # set channel offset
             start[-2] += self._info.channels_active_first
 
+        if pixel_time is None:
+            global_pixel_time = self.global_pixel_time
+            global_line_time = self.global_line_time
+        elif pixel_time <= 0.0:
+            global_pixel_time = 0
+            global_line_time = 0
+            if self.is_sinusoidal:
+                raise ValueError(
+                    f'cannot use sinusoidal correction with {pixel_time=}'
+                )
+            if ndim == 4:
+                raise ValueError(f'cannot decode line scan with {pixel_time=}')
+        else:
+            global_pixel_time = max(
+                1, int(round(pixel_time / self.global_resolution))
+            )
+            global_line_time = global_pixel_time * self.pixels_in_line
+
         if self.is_sinusoidal:
             pixel_at_time = sinusoidal_correction(
                 self.tags['ImgHdr_SinCorrection'],
-                self.global_line_time,
+                global_line_time,
                 self.pixels_in_line,
                 dtype=numpy.uint16,  # should be enough for pixels_in_line
             )
@@ -2537,8 +2577,9 @@ class PtuFile(PqFile):
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
-                self.global_pixel_time,
-                self.global_line_time,
+                self.pixels_in_line,
+                global_pixel_time,
+                global_line_time,
                 pixel_at_time,
                 self.line_start_mask,
                 self.line_stop_mask,
@@ -2557,7 +2598,7 @@ class PtuFile(PqFile):
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
-                self.global_pixel_time,
+                global_pixel_time,
                 self.line_start_mask,
                 self.line_stop_mask,
                 *start,
@@ -2569,7 +2610,7 @@ class PtuFile(PqFile):
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
-                self.global_pixel_time,
+                global_pixel_time,
                 *start,
                 *step,
             )
@@ -3082,6 +3123,86 @@ FILE_EXTENSIONS = {
 """File extensions of PicoQuant tagged files."""
 
 
+def binwrite(
+    filename: str | os.PathLike[str],
+    data: ArrayLike,
+    /,
+    tcspc_resolution: float,
+    pixel_resolution: float,
+) -> None:
+    """Write TCSPC image histogram and metadata to PicoQuant BIN file.
+
+    Parameters:
+        filename:
+            Name of PicoQuant BIN file.
+        data:
+            TCSPC image histogram array of shape (length, width, bins).
+            Must be compatible with dtype.uint32.
+        tcspc_resolution:
+            TCSPC resolution in s.
+        pixel_resolution:
+            Pixel resolution in μm.
+
+    """
+    data = numpy.asarray(data, '<u4')
+    if data.ndim != 3:
+        raise ValueError(f'invalid {data.ndim=} != 3')
+    with open(filename, 'wb') as fh:
+        fh.write(
+            struct.pack(
+                '<IIfIf',
+                data.shape[1],  # size_x
+                data.shape[0],  # size_y
+                pixel_resolution,
+                data.shape[2],  # size_h
+                tcspc_resolution * 1e9,
+            )
+        )
+        fh.write(data.tobytes())
+
+
+def binread(
+    filename: str | os.PathLike[str], /, *, memmap: bool = False
+) -> tuple[NDArray[Any], dict[str, Any]]:
+    """Return TCSPC image histogram and metadata from PicoQuant BIN file.
+
+    Parameters:
+        filename:
+            Name of PicoQuant BIN file.
+        memmap:
+            If true, return a read-only memory-mapped array.
+
+    Returns:
+        tuple:
+            - histogram:
+              TCSPC image histogram array of shape (length, width, bins).
+            - metadata:
+              Dictionary with metadata.
+
+                - 'shape': Shape of histogram array.
+                - 'pixel_resolution': Pixel resolution in μm.
+                - 'tcspc_resolution': TCSPC resolution in s.
+
+    """
+    data: NDArray[Any]
+    with open(filename, 'rb') as fh:
+        (size_x, size_y, pixel_resolution, size_h, tcspc_resolution) = (
+            struct.unpack('<IIfIf', fh.read(20))
+        )
+        shape = size_y, size_x, size_h
+        if not memmap:
+            data = numpy.empty(shape, '<u4')
+            if fh.readinto(data) != size_y * size_x * size_h * 4:
+                raise ValueError('file too short')
+    if memmap:
+        data = numpy.memmap(filename, '<u4', 'r', offset=20, shape=shape)
+    return data, {
+        'shape': shape,
+        'pixel_resolution': pixel_resolution,
+        'tcspc_resolution': tcspc_resolution * 1e-9,
+    }
+
+
 def encode_tag(tagid: str, value: Any, index: int = -1, /) -> bytes:
     """Return encoded PicoQuant tag.
 
@@ -3274,7 +3395,7 @@ def main(argv: list[str] | None = None) -> int:
     filter = False
     if len(argv) == 1:
         path = askopenfilename(
-            title='Select a TIFF file',
+            title='Select a PTU file',
             filetypes=[
                 (f'{ext.upper()} files', f'*{ext}') for ext in FILE_EXTENSIONS
             ]
