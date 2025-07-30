@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.5.10
+:Version: 2025.7.30
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,24 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.10.11, 3.11.9, 3.12.10, 3.13.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.2.5
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.4.0 (recommended)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.5, 3.14.0rc 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.7.1 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.3 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.5.10 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.15.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.6.11 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.1.0 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.1.2 (build)
 
 Revisions
 ---------
+
+2025.7.30
+
+- Add option to specify pixel time for decoding images.
+- Add functions to read and write PicoQuant BIN files.
+- Drop support for Python 3.10.
 
 2025.5.10
 
@@ -116,8 +122,8 @@ test files or documentation: PT2 and PT3 files, decoding images from
 T2 and SPQR formats, bidirectional per frame, and deprecated image
 reconstruction.
 
-Compatibility of written PTU files with other software is limitedly tested,
-as are decoding line, bidirectional, and sinusoidal scanning.
+Compatibility of written PTU files with other software is limited,
+as is decoding line, bidirectional, and sinusoidal scanning.
 
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
