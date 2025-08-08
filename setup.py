@@ -124,7 +124,6 @@ setup(
     entry_points={'console_scripts': ['ptufile = ptufile.__main__:main']},
     python_requires='>=3.11',
     install_requires=['numpy'],
-    setup_requires=['setuptools', 'numpy'],
     extras_require={
         'all': [
             'xarray',
