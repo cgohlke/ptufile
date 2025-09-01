@@ -11,12 +11,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pypa/cibuildwheel@v3.1.2
+      - uses: actions/checkout@v5
+      - uses: pypa/cibuildwheel@v3.1.4
         env:
           # CIBW_ENVIRONMENT: "PIP_PRE=1"
           CIBW_BUILD_VERBOSITY: 2
-          CIBW_SKIP: "pp* cp37* cp38* cp39* cp310* *musllinux* *i686 *ppc64le *s390x"
+          CIBW_SKIP: "cp38* cp39* cp310* *musllinux* *i686 *ppc64le *s390x"
           # CIBW_ARCHS_LINUX: auto aarch64
           CIBW_ARCHS_LINUX: auto
           CIBW_ARCHS_MACOS: x86_64 arm64
