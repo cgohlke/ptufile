@@ -12,6 +12,7 @@ include docs/_static/custom.css
 include .github/workflows/wheel.yml
 
 exclude *.cmd
+exclude *.yaml
 recursive-exclude doc *
 recursive-exclude docs *
 recursive-exclude test *
