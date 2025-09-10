@@ -29,12 +29,9 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# mypy: allow-untyped-defs
-# mypy: check-untyped-defs=False
-
 """Unittests for the ptufile package.
 
-:Version: 2025.7.30
+:Version: 2025.9.9
 
 """
 
@@ -46,12 +43,14 @@ import logging
 import os
 import pathlib
 import sys
+import sysconfig
 
 import numpy
-import ptufile
-import ptufile.numcodecs
 import pytest
 from numpy.testing import assert_almost_equal, assert_array_equal
+
+import ptufile
+import ptufile.numcodecs
 from ptufile import (
     FILE_EXTENSIONS,
     PhuFile,
@@ -1538,6 +1537,53 @@ def test_issue_line_markers():
         assert data.sum(dtype=numpy.uint32) == 778696
 
 
+def test_issue_imspector(caplog):
+    """Test file written by Seidel group using Abberior Imspector software."""
+    # This file stores wrong marker masks and twice as many lines per frame.
+    # Frames and channels need to be "deinterlaced".
+
+    fname = DATA / 'HHU/PQSpcm_2021-12-13_17-53-45.ptu'
+    with PtuFile(fname) as ptu:
+        assert ptu.tags['CreatorSW_Name'] == 'Imspector'
+        assert ptu.tags['ImgHdr_LineStart'] == 0  # invalid
+        assert ptu.tags['ImgHdr_LineStop'] == 1  # wrong
+        assert ptu.tags['ImgHdr_Frame'] == 2  # wrong
+        assert ptu.tags['ImgHdr_PixY'] == 100  # wrong
+        assert ptu._info.frames == 0
+        assert ptu._info.lines == 0
+        str(ptu)
+
+        image = ptu.decode_image(dtime=-1, frame=-1, keepdims=False)
+        assert 'invalid line_start' in caplog.text
+        assert image.sum() == 0  # empty
+
+    with PtuFile(fname) as ptu:
+        # overwrite invalid header values before inspecting or decoding
+        ptu.tags['ImgHdr_LineStart'] = 1
+        ptu.tags['ImgHdr_LineStop'] = 2
+        ptu.tags['ImgHdr_Frame'] = 3
+        ptu.tags['ImgHdr_PixY'] *= 2
+
+        assert ptu._info.frames == 61
+        assert ptu._info.lines == 12200
+
+        image = ptu.decode_image(dtime=-1, frame=-1, keepdims=False)
+        assert image.sum() == 24953
+
+        # deinterlace lines and channels
+        channel = [
+            image[::2, :, 0] + image[::2, :, 2],
+            image[::2, :, 1] + image[::2, :, 3],
+            image[1::2, :, 0] + image[1::2, :, 2],
+            image[1::2, :, 1] + image[1::2, :, 3],
+        ]
+        assert channel[0].shape == (100, 100)
+        assert channel[0].sum() == 7272
+        assert channel[1].sum() == 6658
+        assert channel[2].sum() == 3789
+        assert channel[3].sum() == 7234
+
+
 @pytest.mark.skipif(xarray is None, reason='xarray not installed')
 def test_imread():
     """Test imread function."""
@@ -2125,6 +2171,14 @@ def test_ptu_numcodecs():
     assert stack[24, 4, 228, 279] == 18
 
 
+@pytest.mark.skipif(
+    not hasattr(sys, '_is_gil_enabled'), reason='GIL status not available'
+)
+def test_gil_enabled():
+    """Test that GIL is disabled on thread-free Python."""
+    assert sys._is_gil_enabled() != sysconfig.get_config_var('Py_GIL_DISABLED')
+
+
 if __name__ == '__main__':
     import warnings
 
@@ -2135,3 +2189,6 @@ if __name__ == '__main__':
     argv.append('--cov=ptufile')
     argv.append('--verbose')
     sys.exit(pytest.main(argv))
+
+# mypy: allow-untyped-defs
+# mypy: check-untyped-defs=False
