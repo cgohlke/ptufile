@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.7.30
+:Version: 2025.9.9
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,22 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.5, 3.14.0rc 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.2
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.7.1 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.3 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.6.11 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.1 (optional)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.7, 3.14.0rc 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.9.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.6 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.9.9 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.2 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.1.2 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.1.3 (build)
 
 Revisions
 ---------
+
+2025.9.9
+
+- Log error when decoding image with invalid line or frame masks.
 
 2025.7.30
 
@@ -149,8 +153,9 @@ test files or documentation: PT2 and PT3 files, decoding images from
 T2 and SPQR formats, bidirectional per frame, and deprecated image
 reconstruction.
 
-Compatibility of written PTU files with other software is limited,
-as is decoding line, bidirectional, and sinusoidal scanning.
+Compatibility with PTU files written by non-PicoQuant software (for example,
+Leica LAS X or Abberior Imspector) is limited, as is decoding line,
+bidirectional, and sinusoidal scanning.
 
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
@@ -168,7 +173,9 @@ Other modules for reading or writing PicoQuant files are
 `phconvert <https://github.com/Photon-HDF5/phconvert/>`_,
 `trattoria <https://pypi.org/project/trattoria/>`_ (wrapper of
 `trattoria-core <https://pypi.org/project/trattoria-core/>`_,
-`tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_), and
+`tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_),
+`PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`,
+and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
@@ -287,7 +294,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.7.30'
+__version__ = '2025.9.9'
 
 __all__ = [
     '__version__',
@@ -1098,7 +1105,7 @@ class PqFile:
                 elif tagid not in tags:
                     logger().error(
                         errmsg(
-                            'tag index out of order',
+                            'tag with index not in tags',
                             tagid,
                             index,
                             typecode,
@@ -2572,6 +2579,20 @@ class PtuFile(PqFile):
             records = self.read_records(cache=True)
 
         if ndim == 5:
+            if (
+                self.line_start_mask == 0
+                or self.line_stop_mask == 0
+                or self.frame_change_mask == 0
+                or self.line_stop_mask == self.line_start_mask
+                or self.frame_change_mask == self.line_start_mask
+                or self.frame_change_mask == self.line_stop_mask
+            ):
+                logger().error(
+                    'invalid line_start, line_stop, or frame_change masks ('
+                    f'0b{self.line_start_mask:b}, '
+                    f'0b{self.line_stop_mask:b}, '
+                    f'0b{self.frame_change_mask:b})'
+                )
             decode_t3_image(
                 histogram,
                 times,
@@ -2593,6 +2614,15 @@ class PtuFile(PqFile):
             )
         elif ndim == 4:
             # not tested
+            if (
+                self.line_start_mask == 0
+                or self.line_stop_mask == 0
+                or self.line_stop_mask == self.line_start_mask
+            ):
+                logger().error(
+                    'invalid line_start or line_stop masks ('
+                    f'0b{self.line_start_mask:b}, 0b{self.line_stop_mask:b})'
+                )
             decode_t3_line(
                 histogram,
                 times,
