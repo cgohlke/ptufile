@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2025.9.9
+
+- Log error when decoding image with invalid line or frame masks.
+
 2025.7.30
 
 - Add option to specify pixel time for decoding images.
