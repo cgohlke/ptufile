@@ -4,6 +4,7 @@ include CHANGES.rst
 include pyproject.toml
 
 include ptufile/py.typed
+include ptufile/_ptufile.pyx
 
 include docs/conf.py
 include docs/index.rst
@@ -13,6 +14,7 @@ include .github/workflows/wheel.yml
 
 exclude *.cmd
 exclude *.yaml
+exclude mypy.ini
 recursive-exclude doc *
 recursive-exclude docs *
 recursive-exclude test *
