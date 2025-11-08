@@ -1,6 +1,15 @@
 Revisions
 ---------
 
+2025.11.8
+
+- Fix reading files with negative TTResult_NumberOfRecords.
+- Remove cache argument from PtuFile.read_records (breaking).
+- Add cache_records property to PtuFile to control caching behavior.
+- Derive PqFileError from ValueError.
+- Factor out BinaryFile base class.
+- Build ABI3 wheels.
+
 2025.9.9
 
 - Log error when decoding image with invalid line or frame masks.
