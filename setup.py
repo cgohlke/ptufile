@@ -5,13 +5,27 @@
 import os
 import re
 import sys
+import sysconfig
 
 import numpy
 from setuptools import Extension, setup
 
 buildnumber = ''
 
-DEBUG = bool(os.environ.get('PTUFILE_DEBUG', False))
+DEBUG = bool(os.environ.get('CG_DEBUG', False))
+LIMITED_API = os.environ.get('CG_LIMITED_API', '1').lower() in ('1', 'true')
+
+if LIMITED_API and not sysconfig.get_config_var('Py_GIL_DISABLED'):
+    py_limited_api = True
+    define_macros = [
+        ('Py_LIMITED_API', 0x030B0000),
+        ('CYTHON_LIMITED_API', '1'),
+    ]
+    options = {'bdist_wheel': {'py_limited_api': 'cp311'}}
+else:
+    py_limited_api = False
+    define_macros = []
+    options = {}
 
 
 def search(pattern: str, string: str, flags: int = 0) -> str:
@@ -92,12 +106,12 @@ ext_modules = [
     Extension(
         'ptufile._ptufile',
         ['ptufile/_ptufile.pyx'],
-        define_macros=[
+        define_macros=define_macros
+        + [
             # ('CYTHON_TRACE_NOGIL', '1'),
-            # ('CYTHON_LIMITED_API', '1'),
-            # ('Py_LIMITED_API', '1'),
-            ('NPY_NO_DEPRECATED_API', 'NPY_1_7_API_VERSION'),
+            ('NPY_NO_DEPRECATED_API', 'NPY_2_0_API_VERSION'),
         ],
+        py_limited_api=py_limited_api,
         extra_compile_args=['/Zi', '/Od'] if DEBUG else [],
         extra_link_args=['-debug:full'] if DEBUG else [],
         include_dirs=[numpy.get_include()],
@@ -134,6 +148,7 @@ setup(
         ],
     },
     ext_modules=ext_modules,
+    options=options,
     zip_safe=False,
     platforms=['any'],
     classifiers=[
