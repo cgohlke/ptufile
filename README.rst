@@ -7,7 +7,7 @@ Read and write PicoQuant PTU and related files
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, SPQR, and BIN), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.9.9
+:Version: 2025.11.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,27 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.7, 3.14.0rc 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.9.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.6 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.9.9 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.2 (optional)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.9, 3.14.0 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.4
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.10.1 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.10.16 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.3 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.1.3 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.0 (build)
 
 Revisions
 ---------
+
+2025.11.8
+
+- Fix reading files with negative TTResult_NumberOfRecords.
+- Remove cache argument from PtuFile.read_records (breaking).
+- Add cache_records property to PtuFile to control caching behavior.
+- Derive PqFileError from ValueError.
+- Factor out BinaryFile base class.
+- Build ABI3 wheels.
 
 2025.9.9
 
@@ -92,20 +101,6 @@ Revisions
 - Warn if tags are not 8-byte aligned in file.
 
 2024.12.20
-
-- Support bi-directional sinusoidal scanning (WIP).
-
-2024.11.26
-
-- Support bi-directional scanning (FLIMbee scanner).
-- Drop support for Python 3.9.
-
-2024.10.10
-
-- Also trim leading channels without photons (breaking).
-- Add property to identify channels with photons.
-
-2024.9.14
 
 - …
 
