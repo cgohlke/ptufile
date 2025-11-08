@@ -34,7 +34,7 @@
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, SPQR, and BIN), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.9.9
+:Version: 2025.11.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,27 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.7, 3.14.0rc 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.9.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.6 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.9.9 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.2 (optional)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.9, 3.14.0 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.4
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.10.1 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.10.16 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.3 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.1.3 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.0 (build)
 
 Revisions
 ---------
+
+2025.11.8
+
+- Fix reading files with negative TTResult_NumberOfRecords.
+- Remove cache argument from PtuFile.read_records (breaking).
+- Add cache_records property to PtuFile to control caching behavior.
+- Derive PqFileError from ValueError.
+- Factor out BinaryFile base class.
+- Build ABI3 wheels.
 
 2025.9.9
 
@@ -119,20 +128,6 @@ Revisions
 - Warn if tags are not 8-byte aligned in file.
 
 2024.12.20
-
-- Support bi-directional sinusoidal scanning (WIP).
-
-2024.11.26
-
-- Support bi-directional scanning (FLIMbee scanner).
-- Drop support for Python 3.9.
-
-2024.10.10
-
-- Also trim leading channels without photons (breaking).
-- Add property to identify channels with photons.
-
-2024.9.14
 
 - …
 
@@ -294,7 +289,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.9.9'
+__version__ = '2025.11.8'
 
 __all__ = [
     '__version__',
@@ -325,6 +320,7 @@ __all__ = [
 
 import dataclasses
 import enum
+import io
 import logging
 import math
 import os
@@ -531,6 +527,7 @@ def imwrite(
         ptu.write(data)
 
 
+@final
 class PtuWriter:
     """Write TCSPC histogram to T3 image mode PTU file.
 
@@ -897,11 +894,162 @@ class PqFileType(enum.Enum):
     """Unknown file, SPQR, contains undocumented data."""
 
 
-class PqFileError(Exception):
+class PqFileError(ValueError):
     """Exception to indicate invalid PicoQuant tagged file structure."""
 
 
-class PqFile:
+class BinaryFile:
+    """Binary file.
+
+    Parameters:
+        file:
+            File name or seekable binary stream.
+        mode:
+            File open mode if `file` is a file name.
+            The default is 'r'. Files are always opened in binary mode.
+
+    Raises:
+        ValueError:
+            Invalid file name, extension, or stream.
+            File is not a binary or seekable stream.
+
+    """
+
+    _fh: IO[bytes]
+    _path: str  # absolute path of file
+    _name: str  # name of file or handle
+    _close: bool  # file needs to be closed
+    _closed: bool  # file is closed
+    _ext: set[str] = set()  # valid extensions, empty for any
+
+    def __init__(
+        self,
+        file: str | os.PathLike[str] | IO[bytes],
+        /,
+        *,
+        mode: Literal['r', 'r+'] | None = None,
+    ) -> None:
+
+        self._path = ''
+        self._name = 'Unnamed'
+        self._close = False
+        self._closed = False
+
+        if isinstance(file, (str, os.PathLike)):
+            ext = os.path.splitext(file)[-1].lower()
+            if self._ext and ext not in self._ext:
+                raise ValueError(
+                    f'invalid file extension: {ext!r} not in {self._ext!r}'
+                )
+            if mode is None:
+                mode = 'r'
+            else:
+                if mode[-1:] == 'b':
+                    mode = mode[:-1]  # type: ignore[assignment]
+                if mode not in {'r', 'r+'}:
+                    raise ValueError(f'invalid {mode=!r}')
+            self._path = os.path.abspath(file)
+            self._close = True
+            self._fh = open(self._path, mode + 'b')
+
+        elif hasattr(file, 'seek'):
+            # binary stream: open file, BytesIO, fsspec LocalFileOpener
+            if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
+                raise ValueError(f'{file!r} is not open in binary mode')
+
+            self._fh = file
+            try:
+                self._fh.tell()
+            except Exception as exc:
+                raise ValueError(f'{file!r} is not seekable') from exc
+            if hasattr(file, 'path'):
+                self._path = os.path.normpath(file.path)
+            elif hasattr(file, 'name'):
+                self._path = os.path.normpath(file.name)
+
+        elif hasattr(file, 'open'):
+            # fsspec OpenFile
+            self._fh = file.open()
+            self._close = True
+            try:
+                self._fh.tell()
+            except Exception as exc:
+                try:
+                    self._fh.close()
+                except Exception:
+                    pass
+                raise ValueError(f'{file!r} is not seekable') from exc
+            if hasattr(file, 'path'):
+                self._path = os.path.normpath(file.path)
+
+        else:
+            raise ValueError(f'cannot handle {type(file)=}')
+
+        if hasattr(file, 'name') and file.name:
+            self._name = os.path.basename(file.name)
+        elif self._path:
+            self._name = os.path.basename(self._path)
+        elif isinstance(file, io.BytesIO):
+            self._name = 'BytesIO'
+        # else:
+        #     self._name = f'{type(file)}'
+
+    @property
+    def filehandle(self) -> IO[bytes]:
+        """File handle."""
+        return self._fh
+
+    @property
+    def filepath(self) -> str:
+        """Path to file."""
+        return self._path
+
+    @property
+    def filename(self) -> str:
+        """Name of file or empty if binary stream."""
+        return os.path.basename(self._path)
+
+    @property
+    def dirname(self) -> str:
+        """Directory containing file or empty if binary stream."""
+        return os.path.dirname(self._path)
+
+    @property
+    def name(self) -> str:
+        """Display name of file."""
+        return self._name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self._name = value
+
+    @property
+    def closed(self) -> bool:
+        """File is closed."""
+        return self._closed
+
+    def close(self) -> None:
+        """Close file."""
+        if self._close:
+            try:
+                self._closed = True
+                self._fh.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> BinaryFile:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        self.close()
+
+    def __repr__(self) -> str:
+        if self._name:
+            return f'<{self.__class__.__name__} {self._name!r}>'
+        return f'<{self.__class__.__name__}>'
+
+
+class PqFile(BinaryFile):
     """PicoQuant unified tagged file.
 
     PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR files contain
@@ -938,9 +1086,6 @@ class PqFile:
     tags: dict[str, Any]
     """PicoQuant unified tags."""
 
-    _fh: IO[bytes]
-    _path: str  # absolute path of file
-    _close: bool  # file needs to be closed
     _data_offset: int  # position of raw data in file
     _number_records_offset: int  # position of TTResult_NumberOfRecords value
 
@@ -955,26 +1100,10 @@ class PqFile:
         mode: Literal['r', 'r+'] | None = None,
         fastload: bool = False,
     ) -> None:
+        super().__init__(file, mode=mode)
+
         self.version = ''
         self.tags = {}
-
-        if isinstance(file, (str, os.PathLike)):
-            if mode is None:
-                mode = 'r'
-            else:
-                if mode[-1:] == 'b':
-                    mode = mode[:-1]  # type: ignore[assignment]
-                if mode not in {'r', 'r+'}:
-                    raise ValueError(f'invalid {mode=!r}')
-            self._path = os.path.abspath(file)
-            self._close = True
-            self._fh = open(self._path, mode + 'b')
-        elif hasattr(file, 'seek'):
-            self._path = ''
-            self._close = False
-            self._fh = file
-        else:
-            raise ValueError(f'cannot open file of type {type(file)}')
 
         fh = self._fh
         magic = fh.read(8)
@@ -1134,30 +1263,6 @@ class PqFile:
         self._data_offset = self._fh.tell()
 
     @property
-    def filehandle(self) -> IO[bytes]:
-        """File handle."""
-        return self._fh
-
-    @property
-    def filename(self) -> str:
-        """Name of file or empty if binary stream."""
-        return os.path.basename(self._path)
-
-    @property
-    def dirname(self) -> str:
-        """Directory containing file or empty if binary stream."""
-        return os.path.dirname(self._path)
-
-    @property
-    def name(self) -> str:
-        """Name of file or handle."""
-        if self._path:
-            return os.path.basename(self._path)
-        if hasattr(self._fh, 'name') and self._fh.name:
-            return self._fh.name
-        return repr(self._fh)
-
-    @property
     def guid(self) -> uuid.UUID:
         """Global identifier of file."""
         return uuid.UUID(self.tags['File_GUID'])
@@ -1192,22 +1297,8 @@ class PqFile:
         except Exception:
             return None
 
-    def close(self) -> None:
-        """Close file handle and free resources."""
-        if self._close:
-            try:
-                self._fh.close()
-            except Exception:
-                pass
-
     def __enter__(self) -> PqFile:
         return self
-
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
-        self.close()
-
-    def __repr__(self) -> str:
-        return f'<{self.__class__.__name__} {self.name!r}>'
 
     def __str__(self) -> str:
         return indent(
@@ -1445,7 +1536,8 @@ class PtuFile(PqFile):
     """
 
     _trimdims: set[str]
-    _asxarray: bool
+    _cache: bool  # cache records in memory
+    _asxarray: bool  # return DataArray from slicing and decode_ functions
     _dtype: numpy.dtype[Any]
     _records: NDArray[numpy.uint32] | None  # cached records
 
@@ -1476,6 +1568,7 @@ class PtuFile(PqFile):
             self._trimdims = {ax.upper() for ax in trimdims}
         self._dtype = numpy.dtype(numpy.uint16)
         self._asxarray = False
+        self._cache = True
 
     def __enter__(self) -> PtuFile:
         return self
@@ -1577,12 +1670,13 @@ class PtuFile(PqFile):
     @cached_property
     def number_records(self) -> int:
         """Number of TTTR records."""
-        count = int(self.tags.get('TTResult_NumberOfRecords', 0))
-        if count == 0:
+        # NOTE: this does not catch invalid TTResult_NumberOfRecords > 0
+        count = value = int(self.tags.get('TTResult_NumberOfRecords', 0))
+        if count <= 0:
             count = (self._fh.seek(0, os.SEEK_END) - self._data_offset) // 4
             if count != 0:
                 logger().warning(
-                    f'{self!r} TTResult_NumberOfRecords is zero. '
+                    f'{self!r} invalid TTResult_NumberOfRecords={value}. '
                     'Using remaining file content as records'
                 )
         return count
@@ -1847,8 +1941,20 @@ class PtuFile(PqFile):
         return self._asxarray
 
     @use_xarray.setter
-    def use_xarray(self, value: bool | None, /) -> None:
+    def use_xarray(self, value: bool, /) -> None:
         self._asxarray = bool(value)
+
+    @property
+    def cache_records(self) -> bool:
+        """Cache records read from file in memory."""
+        return self._cache
+
+    @cache_records.setter
+    def cache_records(self, value: bool, /) -> None:
+        self._cache = bool(value)
+        if not self._cache:
+            del self._records  # close numpy.memmap file handle
+            self._records = None
 
     @property
     def dtype(self) -> numpy.dtype[Any]:
@@ -2015,7 +2121,7 @@ class PtuFile(PqFile):
 
         return PtuInfo(
             *decode_info(
-                self.read_records(cache=True),
+                self.read_records(),
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.line_start_mask,
                 self.line_stop_mask,
@@ -2027,22 +2133,20 @@ class PtuFile(PqFile):
     def read_records(
         self,
         *,
-        cache: bool = False,
         memmap: bool | Literal['r', 'r+', 'c'] = False,
     ) -> NDArray[numpy.uint32]:
         """Return encoded TTTR records from file.
 
+        Records are cached depending on the :py:attr:`PtuFile.cache_records`
+        property.
+
         Parameters:
-            cache:
-                If true, return cached records or cache records read from file.
-                By default, return a new array even if a cached one exists.
             memmap:
-                Only applies if `cache` is false or records are not cached.
+                Memory-map records in file using specified mode.
                 If false (default), read records from file into main memory.
-                Else, memory-map the records in the file in the specified mode.
 
         """
-        if cache and self._records is not None:
+        if self._cache and self._records is not None:
             return self._records
         if self.tags['TTResultFormat_BitsPerRecord'] not in {0, 32}:
             raise ValueError(
@@ -2072,7 +2176,7 @@ class PtuFile(PqFile):
                     f'{self!r} expected {count} records, got {n // 4}'
                 )
                 records = records[: n // 4]
-        if cache:
+        if self._cache:
             self._records = records
         return records
 
@@ -2110,7 +2214,7 @@ class PtuFile(PqFile):
         from ._ptufile import decode_t2_records, decode_t3_records
 
         if records is None:
-            records = self.read_records(cache=True)
+            records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
         if self.is_t3:
             result = create_output(out, (records.size,), T3_RECORD_DTYPE)
@@ -2216,7 +2320,7 @@ class PtuFile(PqFile):
             raise ValueError(f'not an unsigned integer {dtype=!r}')
 
         if records is None:
-            records = self.read_records(cache=True)
+            records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
 
         if 'C' in self._trimdims:
@@ -2576,7 +2680,7 @@ class PtuFile(PqFile):
         from ._ptufile import decode_t3_image, decode_t3_line, decode_t3_point
 
         if records is None:
-            records = self.read_records(cache=True)
+            records = self.read_records()
 
         if ndim == 5:
             if (
@@ -3453,7 +3557,7 @@ def main(argv: list[str] | None = None) -> int:
                     with PtuFile(fname) as ptu:
                         t.print('   open file')
                         t.start()
-                        ptu.read_records(cache=True)
+                        ptu.read_records()
                         t.print('read records')
                         t.start()
                         ptu._info
