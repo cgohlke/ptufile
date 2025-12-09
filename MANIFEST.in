@@ -12,9 +12,14 @@ include docs/_static/custom.css
 
 include .github/workflows/wheel.yml
 
+exclude .env
 exclude *.cmd
 exclude *.yaml
 exclude mypy.ini
+exclude ruff.toml
+exclude *.code-workspace
+exclude .gitignore
+recursive-exclude .vscode *
 recursive-exclude doc *
 recursive-exclude docs *
 recursive-exclude test *
