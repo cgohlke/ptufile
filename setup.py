@@ -12,7 +12,7 @@ from setuptools import Extension, setup
 
 buildnumber = ''
 
-DEBUG = bool(os.environ.get('CG_DEBUG', False))
+DEBUG = bool(os.environ.get('CG_DEBUG', ''))
 LIMITED_API = os.environ.get('CG_LIMITED_API', '1').lower() in ('1', 'true')
 
 if LIMITED_API and not sysconfig.get_config_var('Py_GIL_DISABLED'):
@@ -68,7 +68,7 @@ readme = search(
     re.MULTILINE | re.DOTALL,
 )
 readme = '\n'.join(
-    [description, '=' * len(description)] + readme.splitlines()[1:]
+    [description, '=' * len(description), *readme.splitlines()[1:]]
 )
 
 if 'sdist' in sys.argv:
@@ -106,8 +106,8 @@ ext_modules = [
     Extension(
         'ptufile._ptufile',
         ['ptufile/_ptufile.pyx'],
-        define_macros=define_macros
-        + [
+        define_macros=[
+            *define_macros,
             # ('CYTHON_TRACE_NOGIL', '1'),
             ('NPY_NO_DEPRECATED_API', 'NPY_2_0_API_VERSION'),
         ],
