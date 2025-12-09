@@ -33,7 +33,7 @@
 
 from __future__ import annotations
 
-__all__ = ['register_codec', 'Ptu']
+__all__ = ['Ptu', 'register_codec']
 
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -67,7 +67,7 @@ class Ptu(Codec):  # type: ignore[misc]
         pixel_time: float | None = None,
         trimdims: str | None = None,
         keepdims: bool = True,
-    ):
+    ) -> None:
         if selection is not None:
             # TODO: serialize slices, EllipsisType
             raise NotImplementedError(f'{selection=}')
@@ -86,18 +86,16 @@ class Ptu(Codec):  # type: ignore[misc]
 
     def decode(self, buf: bytes, out: Any | None = None) -> NDArray[Any]:
         """Return decoded image as NumPy array."""
-        with BytesIO(buf) as fh:
-            with PtuFile(fh, trimdims=self.trimdims) as ptu:
-                result = ptu.decode_image(
-                    self.selection,
-                    dtype=self.dtype,
-                    channel=self.channel,
-                    frame=self.frame,
-                    dtime=self.dtime,
-                    pixel_time=self.pixel_time,
-                    keepdims=self.keepdims,
-                )
-        return result
+        with BytesIO(buf) as fh, PtuFile(fh, trimdims=self.trimdims) as ptu:
+            return ptu.decode_image(
+                self.selection,
+                dtype=self.dtype,
+                channel=self.channel,
+                frame=self.frame,
+                dtime=self.dtime,
+                pixel_time=self.pixel_time,
+                keepdims=self.keepdims,
+            )
 
 
 def register_codec(cls: Codec = Ptu, codec_id: str | None = None) -> None:
