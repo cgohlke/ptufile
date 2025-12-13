@@ -1,6 +1,12 @@
 Revisions
 ---------
 
+2025.12.12
+
+- Add PQUNI file type.
+- Add attrs properties and return with xarray DataSets.
+- Improve code quality.
+
 2025.11.8
 
 - Fix reading files with negative TTResult_NumberOfRecords.
