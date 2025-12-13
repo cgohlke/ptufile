@@ -34,7 +34,7 @@
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, SPQR, and BIN), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, SPQR, and BIN), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.11.8
+:Version: 2025.12.12
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,24 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.9, 3.14.0 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.10.1 (recommended)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.12.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.10.16 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.3 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.12.12 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.0 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.2 (build)
 
 Revisions
 ---------
+
+2025.12.12
+
+- Add PQUNI file type.
+- Add attrs properties and return with xarray DataSets.
+- Improve code quality.
 
 2025.11.8
 
@@ -155,6 +161,7 @@ bidirectional, and sinusoidal scanning.
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
+`readPTU <https://github.com/qpl-public/readPTU>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
 `fastFLIM <https://github.com/RobertMolenaar-UT/fastFLIM>`_,
 `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
@@ -169,7 +176,8 @@ Other modules for reading or writing PicoQuant files are
 `trattoria <https://pypi.org/project/trattoria/>`_ (wrapper of
 `trattoria-core <https://pypi.org/project/trattoria-core/>`_,
 `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_),
-`PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`,
+`PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`_,
+`FLOPA <https://github.com/IMCF-Biocev/FLOPA/tree/main/src/flopa/io/ptuio>`_,
 and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
@@ -253,7 +261,7 @@ Coordinates:
   * C        (C) uint8... 0
   * H        (H) float64... 0.0
 Attributes...
-    frequency:      19999200.0
+    name:                     FLIM.ptu
 ...
 
 Write the TCSPC histogram and metadata to a PicoHarpT3 image mode PTU file:
@@ -289,20 +297,19 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.11.8'
+__version__ = '2025.12.12'
 
 __all__ = [
-    '__version__',
-    'binread',
-    'binwrite',
-    'imread',
-    'imwrite',
+    'FILE_EXTENSIONS',
+    'T2_RECORD_DTYPE',
+    'T3_RECORD_DTYPE',
+    'PhuFile',
+    'PhuMeasurementMode',
+    'PhuMeasurementSubMode',
     'PqFile',
     'PqFileError',
     'PqFileType',
-    'PhuFile',
     'PtuFile',
-    'PtuWriter',
     'PtuHwFeatures',
     'PtuMeasurementMode',
     'PtuMeasurementSubMode',
@@ -311,11 +318,12 @@ __all__ = [
     'PtuScanDirection',
     'PtuScannerType',
     'PtuStopReason',
-    'PhuMeasurementMode',
-    'PhuMeasurementSubMode',
-    'FILE_EXTENSIONS',
-    'T2_RECORD_DTYPE',
-    'T3_RECORD_DTYPE',
+    'PtuWriter',
+    '__version__',
+    'binread',
+    'binwrite',
+    'imread',
+    'imwrite',
 ]
 
 import dataclasses
@@ -333,8 +341,8 @@ from typing import TYPE_CHECKING, final, overload
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from types import EllipsisType
-    from typing import IO, Any, Literal
+    from types import EllipsisType, TracebackType
+    from typing import IO, Any, ClassVar, Literal, Self
 
     from numpy.typing import ArrayLike, DTypeLike, NDArray
     from xarray import DataArray
@@ -436,7 +444,7 @@ def imread(
 
     """
     with PtuFile(file, trimdims=trimdims) as ptu:
-        data = ptu.decode_image(
+        return ptu.decode_image(
             selection,
             dtype=dtype,
             channel=channel,
@@ -448,7 +456,6 @@ def imread(
             asxarray=asxarray,
             out=out,
         )
-    return data
 
 
 def imwrite(
@@ -504,7 +511,9 @@ def imwrite(
     data = numpy.asarray(data)
 
     if pixel_time is None:
-        data = data.reshape(PtuWriter.normalize_shape(data.shape, has_frames))
+        data = data.reshape(
+            PtuWriter.normalize_shape(data.shape, has_frames=has_frames)
+        )
         pixel_time = global_resolution * max(
             1, float(numpy.max(data.sum(axis=(3, 4), dtype=numpy.uint64)))
         )
@@ -638,8 +647,10 @@ class PtuWriter:
         self._number_frames_offset = 0
         self._global_resolution = global_resolution
         self._tcspc_resolution = tcspc_resolution
-        self._pixel_time = int(round(pixel_time / global_resolution))
-        self._shape = shape = PtuWriter.normalize_shape(shape, has_frames)
+        self._pixel_time = round(pixel_time / global_resolution)
+        self._shape = shape = PtuWriter.normalize_shape(
+            shape, has_frames=has_frames
+        )
 
         if record_type is None:
             if shape[3] <= 2 and shape[4] <= 4096:
@@ -695,7 +706,7 @@ class PtuWriter:
             'MeasDesc_Resolution': float(self._tcspc_resolution),
             'MeasDesc_BinningFactor': 1,
             'TTResult_NumberOfRecords': self._number_records,
-            'TTResult_SyncRate': int(round(1.0 / self._global_resolution)),
+            'TTResult_SyncRate': round(1.0 / self._global_resolution),
             'TTResultFormat_TTTRRecType': self._record_type,
             'TTResultFormat_BitsPerRecord': 32,
             'ImgHdr_Dimensions': 3,
@@ -756,7 +767,7 @@ class PtuWriter:
                 mode = 'wb'
             elif mode[-1] != 'b':
                 mode += 'b'  # type: ignore[assignment]
-            self._fh = open(file, mode)
+            self._fh = open(file, mode)  # noqa: SIM115
             self._close = True
         elif hasattr(file, 'write') and hasattr(file, 'seek'):
             self._fh = file
@@ -834,19 +845,27 @@ class PtuWriter:
         if self._close:
             try:
                 self._fh.close()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         self._fh = None
 
-    def __enter__(self) -> PtuWriter:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
     @staticmethod
     def normalize_shape(
-        shape: tuple[int, ...], has_frames: bool | None = None, /
+        shape: tuple[int, ...],
+        /,
+        *,
+        has_frames: bool | None = None,
     ) -> tuple[int, int, int, int, int]:
         """Return TCSPC histogram shape normalized to 5D 'TYXCH'."""
         ndim = len(shape)
@@ -890,6 +909,9 @@ class PqFileType(enum.Enum):
     PQDAT = b'PQDATA\0\0'
     """Data file, PQDAT, contains undocumented data."""
 
+    PQUNI = b'PQUNI\0\0\0'
+    """UniHarp file, PQUNI, contains memory and measured data."""
+
     SPQR = b'PQSPQR\0\0'
     """Unknown file, SPQR, contains undocumented data."""
 
@@ -920,7 +942,7 @@ class BinaryFile:
     _name: str  # name of file or handle
     _close: bool  # file needs to be closed
     _closed: bool  # file is closed
-    _ext: set[str] = set()  # valid extensions, empty for any
+    _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
 
     def __init__(
         self,
@@ -950,12 +972,12 @@ class BinaryFile:
                     raise ValueError(f'invalid {mode=!r}')
             self._path = os.path.abspath(file)
             self._close = True
-            self._fh = open(self._path, mode + 'b')
+            self._fh = open(self._path, mode + 'b')  # noqa: SIM115
 
         elif hasattr(file, 'seek'):
             # binary stream: open file, BytesIO, fsspec LocalFileOpener
             if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
-                raise ValueError(f'{file!r} is not open in binary mode')
+                raise TypeError(f'{file!r} is not open in binary mode')
 
             self._fh = file
             try:
@@ -976,7 +998,7 @@ class BinaryFile:
             except Exception as exc:
                 try:
                     self._fh.close()
-                except Exception:
+                except Exception:  # noqa: S110
                     pass
                 raise ValueError(f'{file!r} is not seekable') from exc
             if hasattr(file, 'path'):
@@ -1024,6 +1046,11 @@ class BinaryFile:
         self._name = value
 
     @property
+    def attrs(self) -> dict[str, Any]:
+        """Selected metadata as dict."""
+        return {'name': self.name, 'filepath': self.filepath}
+
+    @property
     def closed(self) -> bool:
         """File is closed."""
         return self._closed
@@ -1034,13 +1061,18 @@ class BinaryFile:
             try:
                 self._closed = True
                 self._fh.close()
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
-    def __enter__(self) -> BinaryFile:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
     def __repr__(self) -> str:
@@ -1089,7 +1121,7 @@ class PqFile(BinaryFile):
     _data_offset: int  # position of raw data in file
     _number_records_offset: int  # position of TTResult_NumberOfRecords value
 
-    _TYPE: set[PqFileType] = set(PqFileType)
+    _TYPE: ClassVar[set[PqFileType]] = set(PqFileType)
     _STR_: tuple[str, ...] = ('type', 'version')  # attributes listed first
 
     def __init__(
@@ -1109,13 +1141,17 @@ class PqFile(BinaryFile):
         magic = fh.read(8)
         try:
             self.type = PqFileType(magic)
-            if self.type not in self._TYPE:
-                raise ValueError(f'{self.type} not in {self._TYPE!r}')
-        except Exception as exc:
+        except ValueError as exc:
             self.close()
             raise PqFileError(
-                f'{self.filename!r} not a {self.__class__.__name__} {magic=!r}'
+                f'{self.filename!r} is not a {self.__class__.__name__} '
+                f'{magic=!r}'
             ) from exc
+        if self.type not in self._TYPE:
+            self.close()
+            raise PqFileError(
+                f'{self.filename!r} type={self.type} is not in {self._TYPE!r}'
+            )
 
         self.version = fh.read(8).strip(b'\0').decode()
         tags = self.tags
@@ -1297,7 +1333,22 @@ class PqFile(BinaryFile):
         except Exception:
             return None
 
-    def __enter__(self) -> PqFile:
+    @property
+    def attrs(self) -> dict[str, Any]:
+        """Selected metadata as dict."""
+        return {
+            **super().attrs,
+            'type': self.type.name,
+            'version': self.version,
+            'guid': str(self.guid),
+            'comment': self.comment,
+            'datetime': (
+                None if self.datetime is None else self.datetime.isoformat()
+            ),
+            'tags': self.tags,
+        }
+
+    def __enter__(self) -> Self:
         return self
 
     def __str__(self) -> str:
@@ -1313,7 +1364,7 @@ class PqFile(BinaryFile):
                 for name in dir(self)
                 if not (
                     name in self._STR_
-                    or name in {'tags', 'name', 'filehandle'}
+                    or name in {'attrs', 'tags', 'name', 'filehandle'}
                     or name.startswith('_')
                     or callable(getattr(self, name))
                 )
@@ -1345,7 +1396,7 @@ class PhuFile(PqFile):
 
     """
 
-    _TYPE: set[PqFileType] = {PqFileType.PHU}
+    _TYPE: ClassVar[set[PqFileType]] = {PqFileType.PHU}
     _STR_ = ('type', 'version', 'measurement_mode', 'measurement_submode')
 
     def __init__(
@@ -1357,7 +1408,7 @@ class PhuFile(PqFile):
     ) -> None:
         super().__init__(file, mode=mode)
 
-    def __enter__(self) -> PhuFile:
+    def __enter__(self) -> Self:
         return self
 
     @property
@@ -1395,11 +1446,22 @@ class PhuFile(PqFile):
     #     """Number of bits per histogram bin."""
     #     return int(self.tags.get('HistoResult_BitsPerBin', 32))
 
+    @property
+    def attrs(self) -> dict[str, Any]:
+        """Selected metadata as dict."""
+        return {
+            **super().attrs,
+            'measurement_mode': self.measurement_mode.name,
+            'measurement_submode': self.measurement_submode.name,
+            'tcspc_resolution': self.tcspc_resolution,
+        }
+
     @overload
     def histograms(
         self,
         index: int | slice | None = None,
         /,
+        *,
         asxarray: Literal[False] = ...,
     ) -> tuple[NDArray[numpy.uint32], ...]: ...
 
@@ -1408,6 +1470,7 @@ class PhuFile(PqFile):
         self,
         index: int | slice | None = None,
         /,
+        *,
         asxarray: Literal[True] = ...,
     ) -> tuple[DataArray, ...]: ...
 
@@ -1416,11 +1479,12 @@ class PhuFile(PqFile):
         self,
         index: int | slice | None = None,
         /,
+        *,
         asxarray: bool = ...,
     ) -> tuple[NDArray[numpy.uint32] | DataArray, ...]: ...
 
     def histograms(
-        self, index: int | slice | None = None, /, asxarray: bool = False
+        self, index: int | slice | None = None, /, *, asxarray: bool = False
     ) -> tuple[NDArray[numpy.uint32] | DataArray, ...]:
         """Return sequences of histograms from file.
 
@@ -1447,6 +1511,7 @@ class PhuFile(PqFile):
         for offset, nbins in zip(
             self.tags['HistResDscr_DataOffset'][index],
             self.tags['HistResDscr_HistogramBins'][index],
+            strict=True,
         ):
             self._fh.seek(offset)
             histograms.append(
@@ -1467,9 +1532,12 @@ class PhuFile(PqFile):
                             0, h.size * r, h.size, endpoint=False
                         )
                     },
+                    attrs=self.attrs,
                     # name=self.name,
                 )
-                for h, r in zip(histograms, self.histogram_resolutions)
+                for h, r in zip(
+                    histograms, self.histogram_resolutions, strict=True
+                )
             ]
         # TODO: do not return tuple if index is integer?
         return tuple(histograms)
@@ -1541,7 +1609,7 @@ class PtuFile(PqFile):
     _dtype: numpy.dtype[Any]
     _records: NDArray[numpy.uint32] | None  # cached records
 
-    _TYPE: set[PqFileType] = {PqFileType.PTU}
+    _TYPE: ClassVar[set[PqFileType]] = {PqFileType.PTU}
     _STR_ = (
         'type',
         'version',
@@ -1570,7 +1638,7 @@ class PtuFile(PqFile):
         self._asxarray = False
         self._cache = True
 
-    def __enter__(self) -> PtuFile:
+    def __enter__(self) -> Self:
         return self
 
     def __getitem__(self, key: Any, /) -> NDArray[Any] | DataArray:
@@ -1742,7 +1810,7 @@ class PtuFile(PqFile):
         Same as ``global_resolution / tcspc_resolution``
 
         """
-        nbins = int(math.floor(self.global_resolution / self.tcspc_resolution))
+        nbins = math.floor(self.global_resolution / self.tcspc_resolution)
         return max(nbins, 1)
 
     @property
@@ -1780,7 +1848,7 @@ class PtuFile(PqFile):
             pixeltime = self._info.line_time / self.pixels_in_line
         else:
             pixeltime = 1e-3 / float(self.tags['MeasDesc_GlobalResolution'])
-        return max(1, int(round(pixeltime)))
+        return max(1, round(pixeltime))
 
     @property
     def global_line_time(self) -> int:
@@ -1796,7 +1864,7 @@ class PtuFile(PqFile):
         else:
             # point scan: line of one pixel
             linetime = 1e-3 / self.tags['MeasDesc_GlobalResolution']
-        return int(round(linetime))
+        return round(linetime)
 
     @property
     def global_frame_time(self) -> int:
@@ -1809,8 +1877,7 @@ class PtuFile(PqFile):
             # image, including retrace
             if self._info.frames == 0:
                 return self._info.acquisition_time
-            else:
-                return self._info.acquisition_time // self._info.frames
+            return self._info.acquisition_time // self._info.frames
         if self._info.lines > 0:
             # line scan
             return self._info.line_time
@@ -1823,7 +1890,7 @@ class PtuFile(PqFile):
         # MeasDesc_AcquisitionTime not reliable
         # aqt = self.tags.get('MeasDesc_AcquisitionTime', 0.0)
         # if aqt > 0:
-        #     return int(round(1e-3 * aqt / self.global_resolution))
+        #     return round(1e-3 * aqt / self.global_resolution)
         return self._info.acquisition_time
 
     @property
@@ -2022,7 +2089,7 @@ class PtuFile(PqFile):
     @property
     def sizes(self) -> dict[str, int]:
         """Map dimension names to lengths."""
-        return dict(zip(self.dims, self.shape))
+        return dict(zip(self.dims, self.shape, strict=True))
 
     @property
     def ndims(self) -> int:
@@ -2105,6 +2172,34 @@ class PtuFile(PqFile):
         coords['C'] = self._coords_c
         coords['H'] = self._coords_h
         return coords
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        """Selected metadata as dict."""
+        return {
+            **super().attrs,
+            'acquisition_time': self.acquisition_time,
+            'active_channels': self.active_channels,
+            'frame_time': self.frame_time,
+            'frequency': self.frequency,
+            'global_acquisition_time': self.global_acquisition_time,
+            'global_frame_time': self.global_frame_time,
+            'global_line_time': self.global_line_time,
+            'global_pixel_time': self.global_pixel_time,
+            'global_resolution': self.global_resolution,
+            'line_time': self.line_time,
+            'max_delaytime': self.number_bins_max,  # for PhasorPy
+            'measurement_mode': self.measurement_mode.name,
+            'measurement_submode': self.measurement_submode.name,
+            'number_bins': self.number_bins,
+            'number_bins_in_period': self.number_bins_in_period,
+            'number_bins_max': self.number_bins_max,
+            'pixel_time': self.pixel_time,
+            'record_type': self.record_type.name,
+            'scanner': None if self.scanner is None else self.scanner.name,
+            'syncrate': self.syncrate,
+            'tcspc_resolution': self.tcspc_resolution,
+        }
 
     @cached_property
     def _info(self) -> PtuInfo:
@@ -2371,6 +2466,7 @@ class PtuFile(PqFile):
             histogram,
             dims=('C', 'H'),
             coords={'C': self._coords_c, 'H': coords},  # name=self.name
+            attrs=self.attrs,
         )
 
     @overload
@@ -2548,7 +2644,7 @@ class PtuFile(PqFile):
 
             if len(selection) > ndim:
                 raise IndexError(f'too many indices in {selection=}')
-            elif len(selection) == ndim:
+            if len(selection) == ndim:
                 selection = list(selection).copy()
                 if Ellipsis in selection:
                     selection[selection.index(Ellipsis)] = None
@@ -2589,17 +2685,20 @@ class PtuFile(PqFile):
 
         start = [0] * ndim
         step = [1] * ndim
-        for i, (index, size) in enumerate(zip(selection, self.shape)):
+        for i, (index, size) in enumerate(
+            zip(selection, self.shape, strict=True)
+        ):
             if index is None:
                 pass
             elif isinstance(index, int):
-                if index < 0:
-                    index %= shape[i]
-                if not 0 <= index < size:
+                idx = index
+                if idx < 0:
+                    idx %= shape[i]
+                if not 0 <= idx < size:
                     raise IndexError(
-                        f'axis {i} {index=} out of range [0, {size}]'
+                        f'axis {i} {idx=} out of range [0, {size}]'
                     )
-                start[i] = index
+                start[i] = idx
                 shape[i] = 1
                 keepaxes[i] = 0
             elif isinstance(index, slice):
@@ -2653,7 +2752,7 @@ class PtuFile(PqFile):
                 raise ValueError(f'cannot decode line scan with {pixel_time=}')
         else:
             global_pixel_time = max(
-                1, int(round(pixel_time / self.global_resolution))
+                1, round(pixel_time / self.global_resolution)
             )
             global_line_time = global_pixel_time * self.pixels_in_line
 
@@ -2684,7 +2783,7 @@ class PtuFile(PqFile):
 
         if ndim == 5:
             if (
-                self.line_start_mask == 0
+                self.line_start_mask == 0  # noqa: PLR1714
                 or self.line_stop_mask == 0
                 or self.frame_change_mask == 0
                 or self.line_stop_mask == self.line_start_mask
@@ -2719,7 +2818,7 @@ class PtuFile(PqFile):
         elif ndim == 4:
             # not tested
             if (
-                self.line_start_mask == 0
+                self.line_start_mask == 0  # noqa: PLR1714
                 or self.line_stop_mask == 0
                 or self.line_stop_mask == self.line_start_mask
             ):
@@ -2782,16 +2881,12 @@ class PtuFile(PqFile):
             )
         if 'T' in dims:
             coords['T'] = times * self.global_resolution
-        attrs = {
-            'frequency': self.frequency,
-            'max_delaytime': self.number_bins_max,
-        }
 
         return DataArray(
             histogram,
             dims=dims,
             coords=coords,
-            attrs=attrs,
+            attrs=self.attrs,
             # name=self.name,
         )
 
@@ -2878,7 +2973,7 @@ class PtuFile(PqFile):
             pyplot.plot(
                 hist.coords['H'], hist.values, label=f'ch {channels[i]}'
             )
-        if 0.0 < self.frequency:
+        if self.frequency > 0.0:
             pyplot.axvline(x=1 / self.frequency, color='0.5', ls=':', lw=0.75)
         pyplot.title(repr(self))
         pyplot.xlabel('delay time [s]' if self.is_t3 else 'time [s]')
@@ -2976,10 +3071,7 @@ class PtuMeasurementSubMode(enum.IntEnum):
     def _missing_(cls, value: object) -> object:
         if not isinstance(value, int):
             return None
-        if value == 0:
-            obj = cls(1)  # Point
-        else:
-            obj = cls(-1)
+        obj = cls(1 if value == 0 else -1)
         obj._value_ = value
         return obj
 
@@ -3252,6 +3344,7 @@ FILE_EXTENSIONS = {
     '.pus': PqFileType.PFS,
     '.pqres': PqFileType.PQRES,
     '.pqdat': PqFileType.PQDAT,
+    '.pquni': PqFileType.PQUNI,
     '.spqr': PqFileType.SPQR,
 }
 """File extensions of PicoQuant tagged files."""
@@ -3406,7 +3499,7 @@ def sinusoidal_correction(
     global_line_time: int,
     pixels_in_line: int,
     *,
-    dtype: DTypeLike = None,
+    dtype: DTypeLike | None = None,
     is_amplitude: bool = True,
 ) -> NDArray[Any]:
     """Return pixel indices of global times in line for sinusoidal scanning.
@@ -3451,7 +3544,7 @@ def create_output(
     out: str | IO[bytes] | NDArray[Any] | None,
     /,
     shape: tuple[int, ...],
-    dtype: DTypeLike,
+    dtype: DTypeLike | None,
 ) -> NDArray[Any] | numpy.memmap[Any, Any]:
     """Return NumPy array where images of shape and dtype can be copied."""
     if out is None:
@@ -3526,7 +3619,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv
 
-    filter = False
+    fltr = False
     if len(argv) == 1:
         path = askopenfilename(
             title='Select a PTU file',
@@ -3540,15 +3633,12 @@ def main(argv: list[str] | None = None) -> int:
         files = glob(argv[1])
     elif os.path.isdir(argv[1]):
         files = glob(f'{argv[1]}/*.p*')
-        filter = True
+        fltr = True
     else:
         files = argv[1:]
 
     for fname in files:
-        if (
-            filter
-            and os.path.splitext(fname)[-1].lower() not in FILE_EXTENSIONS
-        ):
+        if fltr and os.path.splitext(fname)[-1].lower() not in FILE_EXTENSIONS:
             continue
         try:
             with PqFile(fname) as pq:
@@ -3560,11 +3650,11 @@ def main(argv: list[str] | None = None) -> int:
                         ptu.read_records()
                         t.print('read records')
                         t.start()
-                        ptu._info
+                        ptu_info = ptu._info
                         t.print('scan records')
                         print()
                         print(ptu)
-                        print(ptu._info)
+                        print(ptu_info)
                         try:
                             ptu.plot(verbose=True)
                         except NotImplementedError as exc:
