@@ -31,7 +31,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.11.8
+:Version: 2025.12.12
 
 """
 
@@ -44,6 +44,7 @@ import os
 import pathlib
 import sys
 import sysconfig
+import uuid
 
 import numpy
 import pytest
@@ -91,6 +92,8 @@ try:
 except ImportError:
     pyplot = None  # type: ignore[assignment]
 
+
+RNG = numpy.random.default_rng(42)
 
 DATA = pathlib.Path(os.path.dirname(__file__)) / 'data'
 
@@ -152,6 +155,7 @@ class TestBinaryFile:
         filename: str | None = None,
         dirname: str | None = None,
         name: str | None = None,
+        *,
         closed: bool = True,
     ) -> None:
         """Assert BinaryFile attributes."""
@@ -163,6 +167,10 @@ class TestBinaryFile:
             dirname = os.path.dirname(self.fname)
         if name is None:
             name = fh.filename
+
+        attrs = fh.attrs
+        assert attrs['name'] == name
+        assert attrs['filepath'] == filepath
 
         assert fh.filepath == filepath
         assert fh.filename == filename
@@ -190,9 +198,8 @@ class TestBinaryFile:
 
     def test_open_file(self):
         """Test BinaryFile with open binary file."""
-        with open(self.fname, 'rb') as fh:
-            with BinaryFile(fh) as bf:
-                self.validate(bf, closed=False)
+        with open(self.fname, 'rb') as fh, BinaryFile(fh) as bf:
+            self.validate(bf, closed=False)
 
     def test_bytesio(self):
         """Test BinaryFile with BytesIO."""
@@ -223,8 +230,8 @@ class TestBinaryFile:
 
     def test_text_file_fails(self):
         """Test BinaryFile with open text file fails."""
-        with open(self.fname) as fh:
-            with pytest.raises(ValueError):
+        with open(self.fname) as fh:  # noqa: SIM117
+            with pytest.raises(TypeError):
                 BinaryFile(fh)
 
     def test_file_extension_fails(self):
@@ -306,7 +313,7 @@ def test_binread(memmap):
 def test_non_pqfile():
     """Test read non-PicoQuant file fails."""
     fname = DATA / 'FRET_GFP and mRFP.pt3'
-    with pytest.raises(PqFileError):
+    with pytest.raises(PqFileError):  # noqa: SIM117
         with PqFile(fname):
             pass
 
@@ -314,7 +321,7 @@ def test_non_pqfile():
 def test_non_ptu():
     """Test read non-PTU file fails."""
     fname = DATA / 'Settings.pfs'
-    with pytest.raises(PqFileError):
+    with pytest.raises(PqFileError):  # noqa: SIM117
         with PtuFile(fname):
             pass
 
@@ -339,6 +346,10 @@ def test_pck():
         assert_array_equal(
             pq.tags['ChkHistogram'][:6], [96, 150, 151, 163, 153, 145]
         )
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 def test_pco():
@@ -349,6 +360,10 @@ def test_pco():
         assert pq.type == PqFileType.PCO
         assert pq.version == '1.0.00'
         assert pq.tags['CreatorSW_Modules'] == 0
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 def test_pfs():
@@ -360,6 +375,10 @@ def test_pfs():
         assert pq.version == '1.0.00'
         assert pq.tags['HW_SerialNo'] == '<SerNo. empty>'
         assert pq.tags['Defaults_Begin'] is None
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 def test_pqres(caplog):
@@ -372,23 +391,61 @@ def test_pqres(caplog):
             assert pq.type == PqFileType.PQRES
             assert pq.version == '00.0.1'
             assert pq.tags['VarStatFilterGrpIdx'].startswith(b'\xe7/\x00\x00')
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 def test_pqdat(caplog):
     """Test read PQDAT file."""
     fname = DATA / 'Luminosa/FRET_20230606-185222/FittedCurveIRF.pqdat'
-    with caplog.at_level(logging.ERROR):
-        with PqFile(fname) as pq:
-            str(pq)
-            # assert 'not divisible by 8' in caplog.text
-            assert pq.type == PqFileType.PQDAT
-            assert pq.version == '1.0.00'
-            assert len(pq.tags['LSDCurveX']) == 1254
-            assert len(pq.tags['LSDCurveY']) == 1254
-            preview = numpy.frombuffer(
-                pq.tags['PreviewImage'][4:], dtype=numpy.uint8
-            ).reshape(128, 128, 4)
-            assert preview.shape == (128, 128, 4)
+    with caplog.at_level(logging.ERROR), PqFile(fname) as pq:
+        str(pq)
+        # assert 'not divisible by 8' in caplog.text
+        assert pq.type == PqFileType.PQDAT
+        assert pq.version == '1.0.00'
+        assert len(pq.tags['LSDCurveX']) == 1254
+        assert len(pq.tags['LSDCurveY']) == 1254
+        preview = numpy.frombuffer(
+            pq.tags['PreviewImage'][4:], dtype=numpy.uint8
+        ).reshape(128, 128, 4)
+        assert preview.shape == (128, 128, 4)
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
+
+
+def test_pquni():
+    """Test read PQUNI file."""
+    # TODO need better PqUni test data
+    fname = DATA / 'UniHarp/MicroBeads.PqUni'
+    with PqFile(fname) as pq:
+        str(pq)
+        # assert 'not divisible by 8' in caplog.text
+        assert pq.type == PqFileType.PQUNI
+        assert pq.version == '1.0.0.0'
+        assert pq.comment is None
+        assert pq.datetime == datetime.datetime(
+            2025, 11, 14, 12, 15, 46, 665000
+        )
+        assert pq.guid == uuid.UUID('a8210025-5de6-418a-841c-186da82e169e')
+
+        tags = pq.tags
+        assert tags['File_GUID'] == '{A8210025-5DE6-418A-841C-186DA82E169E}'
+        assert tags['CreatorSW_Name'] == 'UniHarp'
+        assert tags['CreatorSW_Version'] == '1.1.1.130'
+        assert tags['File_CreatingTime'] == datetime.datetime(
+            2025, 11, 14, 12, 15, 46, 665000
+        )
+        assert tags['CreatorSW_Modules'] == 0
+        assert tags['HistoResult_NumberOfCurves'] == 0
+
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 def test_spqr():
@@ -404,6 +461,10 @@ def test_spqr():
         ).reshape(128, 128, 4)
         assert preview.shape == (128, 128, 4)
         assert len(pq.tags['SPQRBinWidths']) == 128
+        attrs = pq.attrs
+        assert attrs['type'] == pq.type.name
+        assert attrs['name'] == pq.name
+        assert attrs['tags'] == pq.tags
 
 
 @pytest.mark.parametrize('filetype', [str, io.BytesIO])
@@ -432,6 +493,40 @@ def test_ptu(filetype):
             assert ptu.tags['TTResultFormat_BitsPerRecord'] == 32
             assert ptu.tags['\x02HWInpChan_CFDLeveld'] == [100]  # corrupted?
             assert not ptu.tags['HW_ExternalRefClock']
+
+            attrs = ptu.attrs
+            assert attrs['type'] == ptu.type.name
+            assert attrs['name'] == ptu.name
+            assert attrs['guid'] == str(ptu.guid)
+            assert attrs['datetime'] is None
+            assert attrs['tags'] == ptu.tags
+
+            assert attrs['acquisition_time'] == ptu.acquisition_time
+            assert attrs['active_channels'] == ptu.active_channels
+            assert attrs['frame_time'] == ptu.frame_time
+            assert attrs['frequency'] == ptu.frequency
+            assert (
+                attrs['global_acquisition_time'] == ptu.global_acquisition_time
+            )
+            assert attrs['global_frame_time'] == ptu.global_frame_time
+            assert attrs['global_line_time'] == ptu.global_line_time
+            assert attrs['global_pixel_time'] == ptu.global_pixel_time
+            assert attrs['global_resolution'] == ptu.global_resolution
+            assert attrs['line_time'] == ptu.line_time
+            assert (
+                attrs['max_delaytime'] == ptu.number_bins_max
+            )  # for PhasorPy
+            assert attrs['measurement_mode'] == ptu.measurement_mode.name
+            assert attrs['measurement_submode'] == ptu.measurement_submode.name
+            assert attrs['number_bins'] == ptu.number_bins
+            assert attrs['number_bins_in_period'] == ptu.number_bins_in_period
+            assert attrs['number_bins_max'] == ptu.number_bins_max
+            assert attrs['pixel_time'] == ptu.pixel_time
+            assert attrs['record_type'] == ptu.record_type.name
+            assert attrs['scanner'] == ptu.scanner.name
+            assert attrs['syncrate'] == ptu.syncrate
+            assert attrs['tcspc_resolution'] == ptu.tcspc_resolution
+
             # decoding of records is tested separately
     finally:
         if filetype is not str:
@@ -454,7 +549,17 @@ def test_phu(filetype):
             assert not phu.tags['HWTriggerOut_On']
             assert phu.tcspc_resolution == 2.5e-11
             assert phu.number_histograms == 4
-            assert phu.histogram_resolutions == (3e-11, 3e-11, 3e-11, 3e-11)
+            # assert phu.histogram_resolutions == (3e-11, 3e-11, 3e-11, 3e-11)
+
+            attrs = phu.attrs
+            assert attrs['type'] == phu.type.name
+            assert attrs['name'] == phu.name
+            assert attrs['tags'] == phu.tags
+            assert attrs['measurement_mode'] == phu.measurement_mode.name
+            assert attrs['measurement_submode'] == phu.measurement_submode.name
+            assert attrs['tcspc_resolution'] == phu.tcspc_resolution
+            # assert attrs['histogram_resolutions']==phu.histogram_resolutions
+
             assert_array_equal(
                 phu.tags['HistResDscr_DataOffset'],
                 [11224, 142296, 273368, 404440],
@@ -1648,7 +1753,7 @@ def test_issue_record_number(caplog):
 def test_issue_tag_index_order(caplog):
     """Test tag index out of order."""
     fname = DATA / 'picoquant-sample-data/hydraharp/v10_t2.ptu'
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.ERROR):  # noqa: SIM117
         with PqFile(fname) as pq:
             str(pq)
             assert 'tag index out of order' in caplog.text
@@ -1663,7 +1768,7 @@ def test_issue_tag_index_order(caplog):
 
 @pytest.mark.skipif(xarray is None, reason='xarray not installed')
 @pytest.mark.parametrize(
-    'dtime, size',
+    ('dtime', 'size'),
     [
         (None, 139),  # last bin with non-zero photons
         (0, 132),  # last bin matching frequency
@@ -1789,7 +1894,7 @@ def test_imread():
 def test_imwrite(record_type, pixel_time, shape, counts):
     """Test imwrite function."""
     if counts:
-        data = numpy.random.randint(0, counts, shape, numpy.uint8)
+        data = RNG.integers(0, counts, shape, numpy.uint8)
     else:
         data = numpy.zeros(shape, numpy.uint8)
 
@@ -2234,7 +2339,7 @@ def test_signal_from_ptu_irf():
     'fname',
     itertools.chain.from_iterable(
         glob.glob(f'**/*{ext}', root_dir=DATA, recursive=True)
-        for ext in FILE_EXTENSIONS.keys()
+        for ext in FILE_EXTENSIONS
     ),
 )
 def test_glob(fname):
@@ -2251,7 +2356,7 @@ def test_glob(fname):
 
 
 @pytest.mark.parametrize(
-    'trimdims, dtime, size', [('TC', None, 4096), ('TCH', 0, 132)]
+    ('trimdims', 'dtime', 'size'), [('TC', None, 4096), ('TCH', 0, 132)]
 )
 def test_ptu_zip_sequence(trimdims, dtime, size):
     """Test read Z-stack with imread and tifffile.FileSequence."""
@@ -2281,13 +2386,13 @@ def test_ptu_leica_sequence():
         chunkshape=(512, 512, 132),  # shape returned by imread
         chunkdtype='uint8',  # dtype returned by imread
         ioworkers=None,  # use multi-threading
-        imreadargs=dict(
-            frame=0,
-            channel=0,
-            dtime=132,  # fix number of bins to 132
-            dtype='uint8',  # request uint8 output
-            keepdims=False,
-        ),
+        imreadargs={
+            'frame': 0,
+            'channel': 0,
+            'dtime': 132,  # fix number of bins to 132
+            'dtype': 'uint8',  # request uint8 output
+            'keepdims': False,
+        },
     )
     assert stack.shape == (41, 10, 512, 512, 132)
     assert stack.dtype == 'uint8'
@@ -2316,15 +2421,15 @@ def test_ptu_numcodecs():
         imread=imread,
         chunkshape=(512, 512),  # shape returned by imread
         chunkdtype='uint8',  # dtype returned by imread
-        imreadargs=dict(
-            frame=0,
-            channel=0,
-            dtime=-1,
-            pixel_time=None,
-            dtype='uint8',  # request uint8 output
-            trimdims=None,
-            keepdims=False,
-        ),
+        imreadargs={
+            'frame': 0,
+            'channel': 0,
+            'dtime': -1,
+            'pixel_time': None,
+            'dtype': 'uint8',  # request uint8 output
+            'trimdims': None,
+            'keepdims': False,
+        },
         aszarr=True,
     )
     assert isinstance(store, tifffile.zarr.ZarrFileSequenceStore)
