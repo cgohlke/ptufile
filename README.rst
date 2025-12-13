@@ -7,7 +7,7 @@ Read and write PicoQuant PTU and related files
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, SPQR, and BIN), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, SPQR, and BIN), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.11.8
+:Version: 2025.12.12
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,24 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.9, 3.14.0 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.4
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.10.1 (recommended)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `Xarray <https://pypi.org/project/xarray>`_ 2025.12.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.10.16 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.3 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.12.12 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.0 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.2 (build)
 
 Revisions
 ---------
+
+2025.12.12
+
+- Add PQUNI file type.
+- Add attrs properties and return with xarray DataSets.
+- Improve code quality.
 
 2025.11.8
 
@@ -128,6 +134,7 @@ bidirectional, and sinusoidal scanning.
 Other modules for reading or writing PicoQuant files are
 `Read_PTU.py
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/blob/master/PTU/Python/Read_PTU.py>`_,
+`readPTU <https://github.com/qpl-public/readPTU>`_,
 `readPTU_FLIM <https://github.com/SumeetRohilla/readPTU_FLIM>`_,
 `fastFLIM <https://github.com/RobertMolenaar-UT/fastFLIM>`_,
 `PyPTU <https://gitlab.inria.fr/jrye/pyptu>`_,
@@ -142,7 +149,8 @@ Other modules for reading or writing PicoQuant files are
 `trattoria <https://pypi.org/project/trattoria/>`_ (wrapper of
 `trattoria-core <https://pypi.org/project/trattoria-core/>`_,
 `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_),
-`PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`,
+`PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`_,
+`FLOPA <https://github.com/IMCF-Biocev/FLOPA/tree/main/src/flopa/io/ptuio>`_,
 and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
@@ -242,7 +250,7 @@ into a ``xarray.DataArray``, keeping reduced axes:
       * C        (C) uint8... 0
       * H        (H) float64... 0.0
     Attributes...
-        frequency:      19999200.0
+        name:                     FLIM.ptu
     ...
 
 Write the TCSPC histogram and metadata to a PicoHarpT3 image mode PTU file:
