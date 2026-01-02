@@ -1,6 +1,6 @@
 # ptufile/numcodecs.py
 
-# Copyright (c) 2024-2025, Christoph Gohlke
+# Copyright (c) 2024-2026, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -70,7 +70,8 @@ class Ptu(Codec):  # type: ignore[misc]
     ) -> None:
         if selection is not None:
             # TODO: serialize slices, EllipsisType
-            raise NotImplementedError(f'{selection=}')
+            msg = f'{selection=}'
+            raise NotImplementedError(msg)
         self.selection = selection
         self.dtype = dtype
         self.channel = channel
