@@ -13,7 +13,7 @@ jobs:
         python-version: ["3.14"]
     steps:
       - uses: actions/checkout@v5
-      - uses: pypa/cibuildwheel@v3.3.0
+      - uses: pypa/cibuildwheel@v3.3.1
         env:
           # MACOSX_DEPLOYMENT_TARGET: "11.0"
           # CIBW_ENVIRONMENT: "PIP_PRE=1"
@@ -39,7 +39,7 @@ jobs:
         run: |
           cd ..
           python -c "import ptufile;from ptufile import _ptufile;print(ptufile.__version__)"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           path: ./wheelhouse/*.whl
           name: wheels-${{ matrix.os }}
