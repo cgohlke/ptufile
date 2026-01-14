@@ -1,6 +1,6 @@
 # test_ptufile.py
 
-# Copyright (c) 2023-2025, Christoph Gohlke
+# Copyright (c) 2023-2026, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2025.12.12
+:Version: 2026.1.14
 
 """
 
@@ -44,6 +44,7 @@ import os
 import pathlib
 import sys
 import sysconfig
+import tempfile
 import uuid
 
 import numpy
@@ -409,7 +410,7 @@ def test_pqdat(caplog):
         assert len(pq.tags['LSDCurveY']) == 1254
         preview = numpy.frombuffer(
             pq.tags['PreviewImage'][4:], dtype=numpy.uint8
-        ).reshape(128, 128, 4)
+        ).reshape((128, 128, 4))
         assert preview.shape == (128, 128, 4)
         attrs = pq.attrs
         assert attrs['type'] == pq.type.name
@@ -458,7 +459,7 @@ def test_spqr():
         assert pq.tags['CreatorSW_Name'] == 'NovaConvert'
         preview = numpy.frombuffer(
             pq.tags['SPQRPrevImage'], dtype=numpy.uint8
-        ).reshape(128, 128, 4)
+        ).reshape((128, 128, 4))
         assert preview.shape == (128, 128, 4)
         assert len(pq.tags['SPQRBinWidths']) == 128
         attrs = pq.attrs
@@ -1225,8 +1226,6 @@ def test_ptu_output(output):
         if output == 'ndarray':
             out = numpy.zeros(shape, 'uint32')
         elif output == 'fname':
-            import tempfile
-
             out = tempfile.TemporaryFile()
         else:
             out = 'memmap'
