@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.12.12
+:Version: 2026.1.14
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -38,17 +38,21 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
 - `Xarray <https://pypi.org/project/xarray>`_ 2025.12.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.12.12 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.14 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.2 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.4 (build)
 
 Revisions
 ---------
+
+2026.1.14
+
+- Improve code quality.
 
 2025.12.12
 
@@ -97,16 +101,6 @@ Revisions
 - Fall back to file size if TTResult_NumberOfRecords is zero (#2).
 
 2024.12.28
-
-- Add imwrite function to encode TCSPC image histogram in T3 PTU format.
-- Add enums for more PTU tag values.
-- Add PqFile.datetime property.
-- Read TDateTime tag as datetime instead of struct_time (breaking).
-- Rename PtuFile.type property to record_type (breaking).
-- Fix reading PHU missing HistResDscr_HWBaseResolution tag.
-- Warn if tags are not 8-byte aligned in file.
-
-2024.12.20
 
 - …
 
