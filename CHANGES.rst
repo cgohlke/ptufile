@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2026.1.14
+
+- Improve code quality.
+
 2025.12.12
 
 - Add PQUNI file type.
