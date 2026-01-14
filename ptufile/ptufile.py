@@ -1,6 +1,6 @@
 # ptufile.py
 
-# Copyright (c) 2023-2025, Christoph Gohlke
+# Copyright (c) 2023-2026, Christoph Gohlke
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2025.12.12
+:Version: 2026.1.14
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -65,17 +65,21 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.3.5
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
 - `Xarray <https://pypi.org/project/xarray>`_ 2025.12.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.7 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2025.12.12 (optional)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.14 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.2 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.4 (build)
 
 Revisions
 ---------
+
+2026.1.14
+
+- Improve code quality.
 
 2025.12.12
 
@@ -124,16 +128,6 @@ Revisions
 - Fall back to file size if TTResult_NumberOfRecords is zero (#2).
 
 2024.12.28
-
-- Add imwrite function to encode TCSPC image histogram in T3 PTU format.
-- Add enums for more PTU tag values.
-- Add PqFile.datetime property.
-- Read TDateTime tag as datetime instead of struct_time (breaking).
-- Rename PtuFile.type property to record_type (breaking).
-- Fix reading PHU missing HistResDscr_HWBaseResolution tag.
-- Warn if tags are not 8-byte aligned in file.
-
-2024.12.20
 
 - …
 
@@ -297,7 +291,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2025.12.12'
+__version__ = '2026.1.14'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -326,6 +320,7 @@ __all__ = [
     'imwrite',
 ]
 
+import contextlib
 import dataclasses
 import enum
 import io
@@ -340,7 +335,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, final, overload
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from types import EllipsisType, TracebackType
     from typing import IO, Any, ClassVar, Literal, Self
 
@@ -634,11 +629,14 @@ class PtuWriter:
         """Write PTU header to file."""
         # 0 < tcspc_resolution <= global_resolution <= pixel_time
         if tcspc_resolution <= 0.0:
-            raise ValueError(f'{tcspc_resolution=} <= 0.0')
+            msg = f'{tcspc_resolution=} <= 0.0'
+            raise ValueError(msg)
         if tcspc_resolution > global_resolution:
-            raise ValueError(f'{tcspc_resolution=} > {global_resolution=}')
+            msg = f'{tcspc_resolution=} > {global_resolution=}'
+            raise ValueError(msg)
         if pixel_time < global_resolution:
-            raise ValueError(f'{pixel_time=} < {global_resolution=}')
+            msg = f'{pixel_time=} < {global_resolution=}'
+            raise ValueError(msg)
 
         self._fh = None
         self._number_records = 0
@@ -660,10 +658,11 @@ class PtuWriter:
 
         if record_type == PtuRecordType.PicoHarpT3:
             if shape[3] > 4 or shape[4] > 4096:
-                raise ValueError(
+                msg = (
                     f'{record_type=} does not support '
                     f'{shape[3]} channels and {shape[4]} bins'
                 )
+                raise ValueError(msg)
             self._record_type = PtuRecordType.PicoHarpT3
         elif record_type in {
             PtuRecordType.GenericT3,
@@ -672,13 +671,15 @@ class PtuWriter:
             PtuRecordType.TimeHarp260PT3,
         }:
             if shape[3] > 63 or shape[4] > 32768:
-                raise ValueError(
+                msg = (
                     f'{record_type=} does not support '
                     f'{shape[3]} channels and {shape[4]} bins'
                 )
+                raise ValueError(msg)
             self._record_type = PtuRecordType.GenericT3
         else:
-            raise ValueError(f'{record_type=} not supported')
+            msg = f'{record_type=} not supported'
+            raise ValueError(msg)
 
         if comment is None:
             comment = ''
@@ -688,12 +689,14 @@ class PtuWriter:
         elif isinstance(guid, uuid.UUID):
             guid = f'{{{guid}}}'
         elif len(guid) != 38 or guid[9] != '-':
-            raise ValueError('invalid GUID')
+            msg = 'invalid GUID'
+            raise ValueError(msg)
 
         if pixel_resolution is None:
             pixel_resolution = 1.0
         elif pixel_resolution <= 0.0:
-            raise ValueError(f'{pixel_resolution=} <= 0.0')
+            msg = f'{pixel_resolution=} <= 0.0'
+            raise ValueError(msg)
 
         if datetime is None:
             datetime = now()
@@ -773,7 +776,8 @@ class PtuWriter:
             self._fh = file
             self._close = False
         else:
-            raise ValueError(f'cannot write to {type(file)=}')
+            msg = f'cannot write to {type(file)=}'
+            raise ValueError(msg)
 
         self._fh.write(header)
 
@@ -791,7 +795,8 @@ class PtuWriter:
 
         data = numpy.asarray(data)
         if data.dtype.kind != 'u':
-            raise ValueError(f'{data.dtype=} is not an unsigned integer')
+            msg = f'{data.dtype=} is not an unsigned integer'
+            raise ValueError(msg)
         data = data.reshape(self._shape)
 
         number_photons = int(data.sum(dtype=numpy.uint64))
@@ -823,7 +828,8 @@ class PtuWriter:
             int(2 ** (self._frame_change - 1)),
         )
         if number_records < 0:
-            raise ValueError(f'{records.size=} < 0')
+            msg = f'{records.size=} < 0'
+            raise ValueError(msg)
 
         assert self._fh is not None
         self._fh.write(records[:number_records].tobytes())
@@ -843,10 +849,8 @@ class PtuWriter:
             self._fh.write(struct.pack('<q', self._number_frames))
 
         if self._close:
-            try:
+            with contextlib.suppress(Exception):
                 self._fh.close()
-            except Exception:  # noqa: S110
-                pass
         self._fh = None
 
     def __enter__(self) -> Self:
@@ -882,7 +886,8 @@ class PtuWriter:
             # 'YXCH'
             return (1, shape[0], shape[1], shape[2], shape[3])
 
-        raise ValueError(f'invalid number of dimensions {len(shape)=}')
+        msg = f'invalid number of dimensions {len(shape)=}'
+        raise ValueError(msg)
 
 
 class PqFileType(enum.Enum):
@@ -960,16 +965,16 @@ class BinaryFile:
         if isinstance(file, (str, os.PathLike)):
             ext = os.path.splitext(file)[-1].lower()
             if self._ext and ext not in self._ext:
-                raise ValueError(
-                    f'invalid file extension: {ext!r} not in {self._ext!r}'
-                )
+                msg = f'invalid file extension: {ext!r} not in {self._ext!r}'
+                raise ValueError(msg)
             if mode is None:
                 mode = 'r'
             else:
                 if mode[-1:] == 'b':
                     mode = mode[:-1]  # type: ignore[assignment]
                 if mode not in {'r', 'r+'}:
-                    raise ValueError(f'invalid {mode=!r}')
+                    msg = f'invalid {mode=!r}'
+                    raise ValueError(msg)
             self._path = os.path.abspath(file)
             self._close = True
             self._fh = open(self._path, mode + 'b')  # noqa: SIM115
@@ -977,13 +982,15 @@ class BinaryFile:
         elif hasattr(file, 'seek'):
             # binary stream: open file, BytesIO, fsspec LocalFileOpener
             if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
-                raise TypeError(f'{file!r} is not open in binary mode')
+                msg = f'{file!r} is not open in binary mode'
+                raise TypeError(msg)
 
             self._fh = file
             try:
                 self._fh.tell()
             except Exception as exc:
-                raise ValueError(f'{file!r} is not seekable') from exc
+                msg = f'{file!r} is not seekable'
+                raise ValueError(msg) from exc
             if hasattr(file, 'path'):
                 self._path = os.path.normpath(file.path)
             elif hasattr(file, 'name'):
@@ -996,16 +1003,16 @@ class BinaryFile:
             try:
                 self._fh.tell()
             except Exception as exc:
-                try:
+                with contextlib.suppress(Exception):
                     self._fh.close()
-                except Exception:  # noqa: S110
-                    pass
-                raise ValueError(f'{file!r} is not seekable') from exc
+                msg = f'{file!r} is not seekable'
+                raise ValueError(msg) from exc
             if hasattr(file, 'path'):
                 self._path = os.path.normpath(file.path)
 
         else:
-            raise ValueError(f'cannot handle {type(file)=}')
+            msg = f'cannot handle {type(file)=}'
+            raise ValueError(msg)
 
         if hasattr(file, 'name') and file.name:
             self._name = os.path.basename(file.name)
@@ -1143,15 +1150,17 @@ class PqFile(BinaryFile):
             self.type = PqFileType(magic)
         except ValueError as exc:
             self.close()
-            raise PqFileError(
+            msg = (
                 f'{self.filename!r} is not a {self.__class__.__name__} '
                 f'{magic=!r}'
-            ) from exc
+            )
+            raise PqFileError(msg) from exc
         if self.type not in self._TYPE:
             self.close()
-            raise PqFileError(
+            msg = (
                 f'{self.filename!r} type={self.type} is not in {self._TYPE!r}'
             )
+            raise PqFileError(msg)
 
         self.version = fh.read(8).strip(b'\0').decode()
         tags = self.tags
@@ -1200,51 +1209,54 @@ class PqFile(BinaryFile):
                         break
                     continue
 
-                # TODO: use dict to dispatch?
-                # frequent typecodes
-                if typecode == PqTagType.Int8:
-                    value = unpack('<q', value)[0]
-                elif typecode == PqTagType.Bool8:
-                    value = bool(unpack('<q', value)[0])
-                elif typecode == PqTagType.Float8:
-                    value = unpack('<d', value)[0]
-                elif typecode == PqTagType.AnsiString:
-                    size = unpack('<q', value)[0]
-                    value = (
-                        fh.read(size)
-                        .rstrip(b'\0')
-                        .decode('windows-1252', errors='ignore')
-                    )
-                elif typecode == PqTagType.Empty8:
-                    value = None
-                elif typecode == PqTagType.TDateTime:
-                    value = unpack('<d', value)[0]
-                    value = datetime(1899, 12, 30) + timedelta(days=value)
-
-                # rarer typecodes
-                elif typecode == PqTagType.WideString:
-                    size = unpack('<q', value)[0]
-                    value = fh.read(size).decode('utf-16-le').rstrip('\0')
-                elif typecode == PqTagType.BinaryBlob:
-                    size = unpack('<q', value)[0]
-                    value = fh.read(size)
-                    if tagid == 'ChkHistogram':
-                        value = numpy.frombuffer(value, dtype=numpy.int64)
-                elif typecode == PqTagType.BitSet64:
-                    value = unpack('<q', value)[0]
-                elif typecode == PqTagType.Color8:
-                    # TODO: unpack to RGB triple
-                    value = unpack('<q', value)[0]
-                elif typecode == PqTagType.Float8Array:
-                    size = unpack('<q', value)[0]
-                    value = unpack(f'<{size // 8}d', fh.read(size))
-                else:
-                    logger().error(
-                        errmsg(
-                            'invalid tag type', tagid, index, typecode, value
+                match typecode:
+                    # frequent typecodes
+                    case PqTagType.Int8:
+                        value = unpack('<q', value)[0]
+                    case PqTagType.Bool8:
+                        value = bool(unpack('<q', value)[0])
+                    case PqTagType.Float8:
+                        value = unpack('<d', value)[0]
+                    case PqTagType.AnsiString:
+                        size = unpack('<q', value)[0]
+                        value = (
+                            fh.read(size)
+                            .rstrip(b'\0')
+                            .decode('windows-1252', errors='ignore')
                         )
-                    )
-                    break
+                    case PqTagType.Empty8:
+                        value = None
+                    case PqTagType.TDateTime:
+                        value = unpack('<d', value)[0]
+                        value = datetime(1899, 12, 30) + timedelta(days=value)
+                    # rarer typecodes
+                    case PqTagType.WideString:
+                        size = unpack('<q', value)[0]
+                        value = fh.read(size).decode('utf-16-le').rstrip('\0')
+                    case PqTagType.BinaryBlob:
+                        size = unpack('<q', value)[0]
+                        value = fh.read(size)
+                        if tagid == 'ChkHistogram':
+                            value = numpy.frombuffer(value, dtype=numpy.int64)
+                    case PqTagType.BitSet64:
+                        value = unpack('<q', value)[0]
+                    case PqTagType.Color8:
+                        # TODO: unpack to RGB triple
+                        value = unpack('<q', value)[0]
+                    case PqTagType.Float8Array:
+                        size = unpack('<q', value)[0]
+                        value = unpack(f'<{size // 8}d', fh.read(size))
+                    case _:
+                        logger().error(
+                            errmsg(
+                                'invalid tag type',
+                                tagid,
+                                index,
+                                typecode,
+                                value,
+                            )
+                        )
+                        break
 
                 # Although tagids can appear multiple times, later tags have
                 # always found to either contain the same or more detailed
@@ -1364,7 +1376,8 @@ class PqFile(BinaryFile):
                 for name in dir(self)
                 if not (
                     name in self._STR_
-                    or name in {'attrs', 'tags', 'name', 'filehandle'}
+                    or name
+                    in {'attrs', 'dirname', 'tags', 'name', 'filehandle'}
                     or name.startswith('_')
                     or callable(getattr(self, name))
                 )
@@ -1503,9 +1516,11 @@ class PhuFile(PqFile):
             index = slice(index, index + 1)
         ncurves = self.number_histograms
         if len(self.tags['HistResDscr_DataOffset']) != ncurves:
-            raise ValueError('invalid HistResDscr_DataOffset tag')
+            msg = 'invalid HistResDscr_DataOffset tag'
+            raise ValueError(msg)
         if len(self.tags['HistResDscr_HistogramBins']) != ncurves:
-            raise ValueError('invalid HistResDscr_HistogramBins tag')
+            msg = 'invalid HistResDscr_HistogramBins tag'
+            raise ValueError(msg)
 
         histograms: list[NDArray[numpy.uint32] | DataArray] = []
         for offset, nbins in zip(
@@ -2032,7 +2047,8 @@ class PtuFile(PqFile):
     def dtype(self, dtype: DTypeLike | None, /) -> None:
         dtype = numpy.dtype('uint16' if dtype is None else dtype)
         if dtype.kind != 'u':
-            raise ValueError(f'{dtype=!r} not an unsigned integer')
+            msg = f'{dtype=!r} not an unsigned integer'
+            raise ValueError(msg)
         self._dtype = dtype
 
     @cached_property
@@ -2244,17 +2260,16 @@ class PtuFile(PqFile):
         if self._cache and self._records is not None:
             return self._records
         if self.tags['TTResultFormat_BitsPerRecord'] not in {0, 32}:
-            raise ValueError(
-                'invalid bits per record '
-                f"{self.tags['TTResultFormat_BitsPerRecord']}"
-            )
+            msg = f"invalid {self.tags['TTResultFormat_BitsPerRecord']=}"
+            raise ValueError(msg)
         count = self.number_records
         records: NDArray[numpy.uint32]
         if memmap:
             if memmap is True:
                 memmap = 'r'
             elif memmap not in {'r', 'r+', 'c'}:
-                raise ValueError(f'invalid memmap mode={memmap=!r}')
+                msg = f'invalid memmap mode={memmap=!r}'
+                raise ValueError(msg)
             records = numpy.memmap(
                 self._fh,
                 dtype=numpy.uint32,
@@ -2312,10 +2327,14 @@ class PtuFile(PqFile):
             records = self.read_records()
         rectype = self.tags['TTResultFormat_TTTRRecType']
         if self.is_t3:
-            result = create_output(out, (records.size,), T3_RECORD_DTYPE)
+            result = create_output(
+                out, (records.size,), T3_RECORD_DTYPE, fillvalue=0
+            )
             decode_t3_records(result, records, rectype)
         else:
-            result = create_output(out, (records.size,), T2_RECORD_DTYPE)
+            result = create_output(
+                out, (records.size,), T2_RECORD_DTYPE, fillvalue=0
+            )
             decode_t2_records(result, records, rectype)
         return result
 
@@ -2412,7 +2431,8 @@ class PtuFile(PqFile):
             dtype = numpy.uint32 if self.is_t3 else numpy.uint16
         dtype = numpy.dtype(dtype)
         if dtype.kind != 'u':
-            raise ValueError(f'not an unsigned integer {dtype=!r}')
+            msg = f'not an unsigned integer {dtype=!r}'
+            raise ValueError(msg)
 
         if records is None:
             records = self.read_records()
@@ -2431,8 +2451,11 @@ class PtuFile(PqFile):
             elif dtime > 0:
                 nbins = dtime
             else:
-                raise ValueError(f'{dtime=} < 0')
-            histogram = create_output(out, (self.shape[-2], nbins), dtype)
+                msg = f'{dtime=} < 0'
+                raise ValueError(msg)
+            histogram = create_output(
+                out, (self.shape[-2], nbins), dtype, fillvalue=0
+            )
             decode_t3_histogram(histogram, records, rectype, first_channel)
             coords = numpy.linspace(
                 0,
@@ -2450,6 +2473,7 @@ class PtuFile(PqFile):
                     max(1, self.global_acquisition_time // sampling_time),
                 ),
                 dtype,
+                fillvalue=0,
             )
             decode_t2_histogram(
                 histogram, records, rectype, sampling_time, first_channel
@@ -2619,16 +2643,17 @@ class PtuFile(PqFile):
         # TODO: support ReqHdr_ScanningPattern = 1, bidirectional per frame
         if not self.is_t3:
             # TODO: T2 images
-            raise NotImplementedError('not a T3 image')
+            msg = 'not a T3 image'
+            raise NotImplementedError(msg)
         if self.is_bidirectional and not self.is_image:
-            raise NotImplementedError(
-                'bidirectional scanning only supported for images'
-            )
+            msg = 'bidirectional scanning only supported for images'
+            raise NotImplementedError(msg)
         if self.is_image and 'ImgHdr_LineStart' not in self.tags:
             # TODO: deprecated image reconstruction using
             #   ImgHdr_PixResol, ImgHdr_TStartTo, ImgHdr_TStopTo,
             #   ImgHdr_TStartFro, ImgHdr_TStopFro
-            raise NotImplementedError('old-style image reconstruction')
+            msg = 'old-style image reconstruction'
+            raise NotImplementedError(msg)
 
         shape = list(self.shape)
         ndim = len(shape)
@@ -2643,7 +2668,8 @@ class PtuFile(PqFile):
                 selection = [selection]  # type: ignore[list-item]
 
             if len(selection) > ndim:
-                raise IndexError(f'too many indices in {selection=}')
+                msg = f'too many indices in {selection=}'
+                raise IndexError(msg)
             if len(selection) == ndim:
                 selection = list(selection).copy()
                 if Ellipsis in selection:
@@ -2660,24 +2686,26 @@ class PtuFile(PqFile):
             else:
                 selection = list(selection) + [None] * (ndim - len(selection))
             if Ellipsis in selection:
-                raise IndexError(f'more than one Ellipsis in {selection=}')
+                msg = f'more than one Ellipsis in {selection=}'
+                raise IndexError(msg)
 
         if frame is not None:
             if frame >= shape[0]:
-                raise IndexError(f'{frame=} out of range')
+                msg = f'{frame=} out of range'
+                raise IndexError(msg)
             selection[0] = frame if frame >= 0 else slice(None, None, -1)
         if channel is not None:
             if channel >= shape[-2]:
-                raise IndexError(f'{channel=} out of range')
+                msg = f'{channel=} out of range'
+                raise IndexError(msg)
             selection[-2] = channel if channel >= 0 else slice(None, None, -1)
         if dtime is not None:
             if dtime == 0:
                 dtime = self.number_bins_in_period
             if dtime > 0:
                 if dtime > self.number_bins_max:
-                    raise IndexError(
-                        f'{dtime=} out of range {self.number_bins_max}'
-                    )
+                    msg = f'{dtime=} out of range {self.number_bins_max}'
+                    raise IndexError(msg)
                 selection[-1] = slice(0, dtime, 1)
                 shape[-1] = dtime
             else:
@@ -2695,9 +2723,8 @@ class PtuFile(PqFile):
                 if idx < 0:
                     idx %= shape[i]
                 if not 0 <= idx < size:
-                    raise IndexError(
-                        f'axis {i} {idx=} out of range [0, {size}]'
-                    )
+                    msg = f'axis {i} {idx=} out of range [0, {size}]'
+                    raise IndexError(msg)
                 start[i] = idx
                 shape[i] = 1
                 keepaxes[i] = 0
@@ -2707,18 +2734,16 @@ class PtuFile(PqFile):
                     if istart < 0:
                         istart %= shape[i]
                     if not 0 <= istart < shape[i]:
-                        raise IndexError(
-                            f'axis {i} {index=} start out of range'
-                        )
+                        msg = f'axis {i} {index=} start out of range'
+                        raise IndexError(msg)
                     start[i] = istart
                 if index.stop is not None:
                     istop = index.stop
                     if istop < 0:
                         istop %= shape[i]
                     if not start[i] < istop <= shape[i]:
-                        raise IndexError(
-                            f'axis {i} {index=} stop out of range'
-                        )
+                        msg = f'axis {i} {index=} stop out of range'
+                        raise IndexError(msg)
                     shape[i] = istop
                 shape[i] -= start[i]
                 if index.step is not None:
@@ -2730,9 +2755,8 @@ class PtuFile(PqFile):
                         step[i] = min(index.step, shape[i])
                     shape[i] = shape[i] // step[i] + min(1, shape[i] % step[i])
             else:
-                raise IndexError(
-                    f'axis {i} index type {type(index)!r} invalid'
-                )
+                msg = f'axis {i} index type {type(index)!r} invalid'
+                raise IndexError(msg)
 
         if self._info.channels_active_first > 0 and 'C' in self._trimdims:
             # set channel offset
@@ -2745,11 +2769,11 @@ class PtuFile(PqFile):
             global_pixel_time = 0
             global_line_time = 0
             if self.is_sinusoidal:
-                raise ValueError(
-                    f'cannot use sinusoidal correction with {pixel_time=}'
-                )
+                msg = f'cannot use sinusoidal correction with {pixel_time=}'
+                raise ValueError(msg)
             if ndim == 4:
-                raise ValueError(f'cannot decode line scan with {pixel_time=}')
+                msg = f'cannot decode line scan with {pixel_time=}'
+                raise ValueError(msg)
         else:
             global_pixel_time = max(
                 1, round(pixel_time / self.global_resolution)
@@ -2771,9 +2795,10 @@ class PtuFile(PqFile):
         else:
             dtype = numpy.dtype(dtype)
             if dtype.kind != 'u':
-                raise ValueError(f'not an unsigned integer {dtype=!r}')
+                msg = f'not an unsigned integer {dtype=!r}'
+                raise ValueError(msg)
 
-        histogram = create_output(out, tuple(shape), dtype)
+        histogram = create_output(out, shape, dtype, fillvalue=0)
         times = numpy.zeros(shape[0], numpy.uint64)
 
         from ._ptufile import decode_t3_image, decode_t3_line, decode_t3_point
@@ -3373,7 +3398,8 @@ def binwrite(
     """
     data = numpy.asarray(data, '<u4')
     if data.ndim != 3:
-        raise ValueError(f'invalid {data.ndim=} != 3')
+        msg = f'invalid {data.ndim=} != 3'
+        raise ValueError(msg)
     with open(filename, 'wb') as fh:
         fh.write(
             struct.pack(
@@ -3420,7 +3446,8 @@ def binread(
         if not memmap:
             data = numpy.empty(shape, '<u4')
             if fh.readinto(data) != size_y * size_x * size_h * 4:
-                raise ValueError('file too short')
+                msg = 'file too short'
+                raise ValueError(msg)
     if memmap:
         data = numpy.memmap(filename, '<u4', 'r', offset=20, shape=shape)
     return data, {
@@ -3442,51 +3469,53 @@ def encode_tag(tagid: str, value: Any, index: int = -1, /) -> bytes:
         Encoded tag as bytes.
 
     """
-    if value is None:
-        typecode = PqTagType.Empty8
-        buffer = b'\x00\x00\x00\x00\x00\x00\x00\x00'
-    elif isinstance(value, bool):
-        # must check bool before int
-        typecode = PqTagType.Bool8
-        buffer = struct.pack('<q', value)
-    elif isinstance(value, enum.IntFlag):
-        # must check IntFlag before int
-        typecode = PqTagType.BitSet64
-        buffer = struct.pack('<q', value)
-    elif isinstance(value, int):
-        typecode = PqTagType.Int8
-        buffer = struct.pack('<q', value)
-    elif isinstance(value, float):
-        typecode = PqTagType.Float8
-        buffer = struct.pack('<d', value)
-    elif isinstance(value, str):
-        if not value.endswith('\0'):
-            value += '\0'
-        try:
+    match value:
+        case None:
+            typecode = PqTagType.Empty8
+            buffer = b'\x00\x00\x00\x00\x00\x00\x00\x00'
+        case bool() as v:
+            # must check bool before int
+            typecode = PqTagType.Bool8
+            buffer = struct.pack('<q', v)
+        case enum.IntFlag() as v:
+            # must check IntFlag before int
+            typecode = PqTagType.BitSet64
+            buffer = struct.pack('<q', v)
+        case int() as v:
+            typecode = PqTagType.Int8
+            buffer = struct.pack('<q', v)
+        case float() as v:
+            typecode = PqTagType.Float8
+            buffer = struct.pack('<d', v)
+        case str() as v:
+            if not v.endswith('\0'):
+                v += '\0'
+            try:
+                typecode = PqTagType.AnsiString
+                value_ = v.encode('windows-1252')
+            except UnicodeEncodeError:
+                typecode = PqTagType.WideString
+                value_ = v.encode('utf-16-le')
+            value_ += align_bytes(len(value_), 8)
+            buffer = struct.pack('<q', len(value_)) + value_
+        case datetime() as v:
+            typecode = PqTagType.TDateTime
+            v -= datetime(1899, 12, 30)  # type: ignore[assignment]
+            v /= timedelta(days=1)  # type: ignore[operator]
+            buffer = struct.pack('<d', v)
+        case uuid.UUID() as v:
             typecode = PqTagType.AnsiString
-            value_ = value.encode('windows-1252')
-        except UnicodeEncodeError:
-            typecode = PqTagType.WideString
-            value_ = value.encode('utf-16-le')
-        value_ += align_bytes(len(value_), 8)
-        buffer = struct.pack('<q', len(value_)) + value_
-    elif isinstance(value, datetime):
-        typecode = PqTagType.TDateTime
-        value -= datetime(1899, 12, 30)
-        value /= timedelta(days=1)
-        buffer = struct.pack('<d', value)
-    elif isinstance(value, uuid.UUID):
-        typecode = PqTagType.AnsiString
-        value = f'{{{value}}}'.encode('windows-1252')
-        value += align_bytes(len(value), 8)
-        buffer = struct.pack('<q', len(value)) + value
-    elif isinstance(value, bytes):
-        typecode = PqTagType.BinaryBlob
-        value += align_bytes(len(value), 8)
-        buffer = struct.pack('<q', len(value)) + value
-    else:
-        # TODO: support Color8 and Float8Array
-        raise ValueError(f'{type(value)=} not supported')
+            v = f'{{{v}}}'.encode('windows-1252')
+            v += align_bytes(len(v), 8)
+            buffer = struct.pack('<q', len(v)) + v
+        case bytes() as v:
+            typecode = PqTagType.BinaryBlob
+            v += align_bytes(len(v), 8)
+            buffer = struct.pack('<q', len(v)) + v
+        case _:
+            # TODO: support Color8 and Float8Array
+            msg = f'{type(value)=} not supported'
+            raise ValueError(msg)
 
     # tags always have lengths divisible by 8
     assert len(buffer) % 8 == 0
@@ -3525,11 +3554,14 @@ def sinusoidal_correction(
     """
     dtype = numpy.dtype(numpy.uint16 if dtype is None else dtype)
     if sincorrect <= 0.0 or sincorrect > 100.0:
-        raise ValueError(f'{sincorrect=} out of range')
+        msg = f'{sincorrect=} out of range'
+        raise ValueError(msg)
     if global_line_time < 2:
-        raise ValueError(f'{global_line_time=} out of range')
+        msg = f'{global_line_time=} out of range'
+        raise ValueError(msg)
     if pixels_in_line < 2 or pixels_in_line >= numpy.iinfo(dtype).max:
-        raise ValueError(f'{pixels_in_line=} out of range')
+        msg = f'{pixels_in_line=} out of range'
+        raise ValueError(msg)
     if not is_amplitude:
         sincorrect = math.sin(sincorrect * math.pi / 200.0) * 100.0
     limit = math.asin(-sincorrect / 100.0)
@@ -3541,24 +3573,100 @@ def sinusoidal_correction(
 
 
 def create_output(
-    out: str | IO[bytes] | NDArray[Any] | None,
+    out: OutputType,
     /,
-    shape: tuple[int, ...],
+    shape: Sequence[int],
     dtype: DTypeLike | None,
+    *,
+    mode: Literal['r+', 'w+', 'r', 'c'] = 'w+',
+    suffix: str | None = None,
+    fillvalue: float | None = None,
 ) -> NDArray[Any] | numpy.memmap[Any, Any]:
-    """Return NumPy array where images of shape and dtype can be copied."""
+    """Return NumPy array where data of shape and dtype can be copied.
+
+    Parameters:
+        out:
+            Specifies kind of array of `shape` and `dtype` to return:
+
+                `None`:
+                    Return new array.
+                `numpy.ndarray`:
+                    Return view of existing array.
+                `'memmap'` or `'memmap:tempdir'`:
+                    Return memory-map to array stored in temporary binary file.
+                `str` or open file:
+                    Return memory-map to array stored in specified binary file.
+        shape:
+            Shape of array to return.
+        dtype:
+            Data type of array to return.
+            If `out` is an existing array, `dtype` must be castable to its
+            data type.
+        mode:
+            File mode to create memory-mapped array.
+            The default is 'w+' to create new, or overwrite existing file for
+            reading and writing.
+        suffix:
+            Suffix of `NamedTemporaryFile` if `out` is `'memmap'`.
+            The default is '.memmap'.
+        fillvalue:
+            Value to initialize output array.
+            By default, return uninitialized array.
+
+    Returns:
+        NumPy array or memory-mapped array of `shape` and `dtype`.
+
+    Raises:
+        ValueError:
+            Existing array cannot be reshaped to `shape` or cast to `dtype`.
+
+    """
+    shape = tuple(shape)
+    dtype = numpy.dtype(dtype)
     if out is None:
+        if fillvalue is None:
+            return numpy.empty(shape, dtype)
+        if fillvalue:
+            return numpy.full(shape, fillvalue, dtype)
         return numpy.zeros(shape, dtype)
     if isinstance(out, numpy.ndarray):
-        out.shape = shape
+        if product(shape) != product(out.shape):
+            msg = f'cannot reshape {shape} to {out.shape}'
+            raise ValueError(msg)
+        if not numpy.can_cast(dtype, out.dtype):
+            msg = f'cannot cast {dtype} to {out.dtype}'
+            raise ValueError(msg)
+        out = out.reshape(shape)
+        if fillvalue is not None:
+            out.fill(fillvalue)
         return out
     if isinstance(out, str) and out[:6] == 'memmap':
         import tempfile
 
         tempdir = out[7:] if len(out) > 7 else None
-        with tempfile.NamedTemporaryFile(dir=tempdir, suffix='.memmap') as fh:
-            return numpy.memmap(fh, shape=shape, dtype=dtype, mode='w+')
-    return numpy.memmap(out, shape=shape, dtype=dtype, mode='w+')
+        if suffix is None:
+            suffix = '.memmap'
+        with tempfile.NamedTemporaryFile(dir=tempdir, suffix=suffix) as fh:
+            out = numpy.memmap(fh, shape=shape, dtype=dtype, mode=mode)
+            if fillvalue is not None:
+                out.fill(fillvalue)
+            return out
+    out = numpy.memmap(out, shape=shape, dtype=dtype, mode=mode)
+    if fillvalue is not None:
+        out.fill(fillvalue)
+    return out
+
+
+def product(iterable: Iterable[int], /) -> int:
+    """Return product of integers.
+
+    Like math.prod, but does not overflow with numpy arrays.
+
+    """
+    prod = 1
+    for i in iterable:
+        prod *= int(i)
+    return prod
 
 
 def now() -> datetime:
