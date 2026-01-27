@@ -547,7 +547,7 @@ def decode_t3_image(
         )
     if binc < 1 or bint < 1 or biny < 1 or binx < 1 or binh < 1:
         raise ValueError(
-            f'invalid {bint=}, {biny=}, {binx=}, {binc=}, or {binh=})'
+            f'invalid {bint=}, {biny=}, {binx=}, {binc=}, or {binh=}'
         )
     if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
@@ -574,7 +574,7 @@ def decode_t3_image(
 
         # TODO: process channels/frames in parallel?
         for i in range(nrecords):
-            ispecial = 3
+            ispecial = 3  # invalid, should always be overridden
 
             decode_func(
                 records[i],
@@ -754,8 +754,6 @@ def decode_t2_histogram(
         raise ValueError(f'no decoder available for {format=:02x}')
     if nbins != 0:
         raise ValueError(f'not a T2 {format=:02x}')
-    if bin_time == 0:
-        raise ValueError(f'invalid {bin_time=}')
     if startc < 0:
         raise ValueError(f'{startc=} < 0')
 
