@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.1.14
+:Version: 2026.2.6
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,11 +64,11 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.11, 3.14.2 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.1
-- `Xarray <https://pypi.org/project/xarray>`_ 2025.12.0 (recommended)
+- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.1.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.14 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.28 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -76,6 +76,10 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.2.6
+
+- Fix code review issues.
 
 2026.1.14
 
@@ -291,7 +295,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.1.14'
+__version__ = '2026.2.6'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -982,14 +986,14 @@ class BinaryFile:
         elif hasattr(file, 'seek'):
             # binary stream: open file, BytesIO, fsspec LocalFileOpener
             if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
-                msg = f'{file!r} is not open in binary mode'
+                msg = f'{file=!r} is not open in binary mode'
                 raise TypeError(msg)
 
             self._fh = file
             try:
                 self._fh.tell()
             except Exception as exc:
-                msg = f'{file!r} is not seekable'
+                msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
                 self._path = os.path.normpath(file.path)
@@ -1005,7 +1009,7 @@ class BinaryFile:
             except Exception as exc:
                 with contextlib.suppress(Exception):
                     self._fh.close()
-                msg = f'{file!r} is not seekable'
+                msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
                 self._path = os.path.normpath(file.path)
@@ -1825,6 +1829,8 @@ class PtuFile(PqFile):
         Same as ``global_resolution / tcspc_resolution``
 
         """
+        if self.tcspc_resolution < 1e-14:
+            return 1
         nbins = math.floor(self.global_resolution / self.tcspc_resolution)
         return max(nbins, 1)
 
@@ -1922,13 +1928,12 @@ class PtuFile(PqFile):
             pixels = self.tags['ImgHdr_PixX']
         elif ndim == 2:
             # line scan
-            pixels = round(
-                1e-3
-                / (
-                    self.tags['ImgHdr_TimePerPixel']
-                    * self.tags['ImgHdr_LineFrequency']
-                )
-            )
+            time_per_pixel = self.tags['ImgHdr_TimePerPixel']
+            line_frequency = self.tags['ImgHdr_LineFrequency']
+            if time_per_pixel > 0.0 and line_frequency > 0.0:
+                pixels = round(1e-3 / (time_per_pixel * line_frequency))
+            else:
+                pixels = 1
         else:
             pixels = 1
         return max(1, int(pixels))
@@ -2747,6 +2752,9 @@ class PtuFile(PqFile):
                     shape[i] = istop
                 shape[i] -= start[i]
                 if index.step is not None:
+                    if index.step == 0:
+                        msg = f'axis {i} slice step cannot be zero'
+                        raise IndexError(msg)
                     if index.step < 0:
                         # negative step size -> integrate all
                         step[i] = shape[i]
@@ -3439,7 +3447,7 @@ def binread(
     """
     data: NDArray[Any]
     with open(filename, 'rb') as fh:
-        (size_x, size_y, pixel_resolution, size_h, tcspc_resolution) = (
+        size_x, size_y, pixel_resolution, size_h, tcspc_resolution = (
             struct.unpack('<IIfIf', fh.read(20))
         )
         shape = size_y, size_x, size_h
@@ -3745,14 +3753,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         files = argv[1:]
 
-    for fname in files:
-        if fltr and os.path.splitext(fname)[-1].lower() not in FILE_EXTENSIONS:
+    for filename in files:
+        if (
+            fltr
+            and os.path.splitext(filename)[-1].lower() not in FILE_EXTENSIONS
+        ):
             continue
         try:
-            with PqFile(fname) as pq:
+            with PqFile(filename) as pq:
                 if pq.type == PqFileType.PTU:
                     t = Timer()
-                    with PtuFile(fname) as ptu:
+                    with PtuFile(filename) as ptu:
                         t.print('   open file')
                         t.start()
                         ptu.read_records()
@@ -3768,7 +3779,7 @@ def main(argv: list[str] | None = None) -> int:
                         except NotImplementedError as exc:
                             print('NotImplementedError:', exc)
                 elif pq.type == PqFileType.PHU:
-                    with PhuFile(fname) as phu:
+                    with PhuFile(filename) as phu:
                         print(phu)
                         phu.plot(verbose=True)
                 else:
@@ -3777,7 +3788,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             import traceback
 
-            print('Failed to read', fname)
+            print('Failed to read', filename)
             traceback.print_exc()
             print()
             continue
