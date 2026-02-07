@@ -1,6 +1,10 @@
 Revisions
 ---------
 
+2026.2.6
+
+- Fix code review issues.
+
 2026.1.14
 
 - Improve code quality.
