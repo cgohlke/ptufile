@@ -92,7 +92,7 @@ cdef int init_format(
     decode_func_t* decode,
     ssize_t* bins,  # number_bins_max
     ssize_t* channels,  # number_channels_max
-):
+) noexcept nogil:
     if format == 0x00010303:
         # PicoHarpT3/PicoHarp300
         decode[0] = decode_pt3
@@ -146,89 +146,272 @@ def decode_info(
     """Return information about PicoQuant TTTR records."""
     cdef:
         ssize_t nrecords = records.size
-        ssize_t i, y, maxchannels, maxbins, skip_first_frame, skip_last_frame
+        ssize_t i, maxchannels, maxbins
         ssize_t channels_active_first, channels_active_last
-        uint64_t nbins, nframes, nphotons, nmarkers, nlines
-        uint64_t overflow, time_line_start, time_in_lines, channels_active
-        uint32_t itime, idtime, ichannel
+        ssize_t y = 0
+        ssize_t skip_first_frame = 0
+        ssize_t skip_last_frame = 0
+        uint64_t nbins = 0
+        uint64_t nframes = 0
+        uint64_t nphotons = 0
+        uint64_t nmarkers = 0
+        uint64_t nlines = 0
+        uint64_t overflow = 0
+        uint64_t time_line_start = UINT64_MAX
+        uint64_t time_in_lines = 0
+        uint64_t channels_active = 0
+        uint32_t itime = 0
+        uint32_t idtime, ichannel
         uint8_t ispecial, imarker
-        decode_func_t decode_func
-
-    if init_format(format, &decode_func, &maxbins, &maxchannels) != 0:
-        raise ValueError(f'no decoder available for {format=:02x}')
-
-    # channels_active is 64-bit
-    maxchannels = min(maxchannels, 64)
-
-    # Unfortunately Cython's OpenMP does not support min/max reduction
-    # https://github.com/cython/cython/issues/3585#issuecomment-625961911
 
     with nogil:
-        skip_first_frame = 0
-        skip_last_frame = 0
-        time_line_start = UINT64_MAX
-        time_in_lines = 0
-        channels_active = 0
-        overflow = 0
-        itime = 0
-        nphotons = 0
-        nbins = 0
-        nmarkers = 0
-        nlines = 0
-        nframes = 0
-        y = 0
-        for i in range(nrecords):
-            decode_func(
-                records[i],
-                &itime,
-                &idtime,
-                &ichannel,
-                &overflow,
-                &imarker,
-                &ispecial
-            )
-            if ispecial == 0:
-                # photon record
-                nphotons += 1
-                if ichannel < maxchannels:
-                    channels_active |= (<uint64_t> 1) << ichannel
-                if idtime > nbins and idtime < maxbins:
-                    nbins = idtime
-            elif ispecial == 2:
-                # marker record
-                nmarkers += 1
-                if imarker & frame_change:
-                    # frame marker
-                    if lines_in_frame > y + 1:
-                        # not enough lines in frame
-                        if nframes == 1:
-                            skip_first_frame = 1
-                        else:
-                            skip_last_frame = 1
-                    else:
-                        skip_last_frame = 0
-                    if not imarker & line_stop:
-                        time_line_start = UINT64_MAX
-                    y = 0
-                if imarker & line_stop:
-                    # line stop marker
-                    if (
-                        time_line_start != UINT64_MAX
-                        and (lines_in_frame == 0 or lines_in_frame >= y)
-                    ):
-                        time_in_lines += (overflow + itime) - time_line_start
-                    time_line_start = UINT64_MAX
-                if imarker & line_start:
-                    # line start marker
-                    # TODO: add to time_in_lines if previous line did not stop?
-                    time_line_start = overflow + itime
-                    if y == 0:
-                        # new frame starts at first line
-                        # after start or frame change marker
-                        nframes += 1
-                    y += 1
-                    if lines_in_frame == 0 or lines_in_frame >= y:
-                        nlines += 1
+        # dispatch on format so compiler can inline decoder and optimize loop
+        if format == 0x00010303:
+            # PicoHarpT3/PicoHarp300
+            maxbins = 4096
+            maxchannels = 4
+            for i in range(nrecords):
+                decode_pt3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial,
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        elif format == 0x00010203:
+            # PicoHarpT2/PicoHarp300
+            maxbins = 0
+            maxchannels = 5  # ?
+            for i in range(nrecords):
+                decode_pt2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial,
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        elif format in {
+            0x01010204,  # HydraHarp2T2
+            0x00010205,  # TimeHarp260NT2
+            0x00010206,  # TimeHarp260PT2
+            0x00010207,  # GenericT2 (MultiHarpT2 and Picoharp330T2)
+        }:
+            maxbins = 0
+            maxchannels = 64
+            for i in range(nrecords):
+                decode_ht2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        elif format == 0x00010204:
+            # HydraHarpT2
+            maxbins = 0
+            maxchannels = 64
+            for i in range(nrecords):
+                decode_ht2v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial,
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        elif format in {
+            0x01010304,  # HydraHarp2T3
+            0x00010305,  # TimeHarp260NT3
+            0x00010306,  # TimeHarp260PT3
+            0x00010307,  # GenericT3 (MultiHarpT3 and Picoharp330T3)
+        }:
+            maxbins = 32768
+            maxchannels = 64
+            for i in range(nrecords):
+                decode_ht3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial,
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        elif format == 0x00010304:
+            # HydraHarpT3
+            maxbins = 32768
+            maxchannels = 64
+            for i in range(nrecords):
+                decode_ht3v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial,
+                )
+                decode_info_record(
+                    itime,
+                    idtime,
+                    ichannel,
+                    overflow,
+                    imarker,
+                    ispecial,
+                    line_start,
+                    line_stop,
+                    frame_change,
+                    lines_in_frame,
+                    maxchannels,
+                    maxbins,
+                    &nphotons,
+                    &nbins,
+                    &nmarkers,
+                    &nlines,
+                    &nframes,
+                    &channels_active,
+                    &time_in_lines,
+                    &time_line_start,
+                    &y,
+                    &skip_first_frame,
+                    &skip_last_frame,
+                )
+        else:
+            with gil:
+                msg = f'no decoder available for {format=:02x}'
+                raise ValueError(msg)
 
         channels_active_first = 64
         channels_active_last = 0
@@ -268,12 +451,12 @@ def decode_info(
             if skip_last_frame and nframes > 0:
                 nframes -= 1
 
-    if nlines > 0:
-        time_in_lines = <ssize_t> (
-            round(<double> time_in_lines / <double> nlines)
-        )
-    else:
-        time_in_lines = 0
+        if nlines > 0:
+            time_in_lines = <ssize_t> (
+                round(<double> time_in_lines / <double> nlines)
+            )
+        else:
+            time_in_lines = 0
 
     return (
         format,
@@ -293,6 +476,76 @@ def decode_info(
         time_in_lines,
         overflow + itime
     )
+
+
+cdef inline void decode_info_record(
+    const uint32_t itime,
+    const uint32_t idtime,
+    const uint32_t ichannel,
+    const uint64_t overflow,
+    const uint8_t imarker,
+    const uint8_t ispecial,
+    const uint32_t line_start,
+    const uint32_t line_stop,
+    const uint32_t frame_change,
+    const ssize_t lines_in_frame,
+    const ssize_t maxchannels,
+    const ssize_t maxbins,
+    uint64_t* nphotons,
+    uint64_t* nbins,
+    uint64_t* nmarkers,
+    uint64_t* nlines,
+    uint64_t* nframes,
+    uint64_t* channels_active,
+    uint64_t* time_in_lines,
+    uint64_t* time_line_start,
+    ssize_t* y,
+    ssize_t* skip_first_frame,
+    ssize_t* skip_last_frame,
+) noexcept nogil:
+    """Accumulate one decoded TTTR record into decode_info statistics."""
+    if ispecial == 0:
+        # photon record
+        nphotons[0] += 1
+        if ichannel < <uint32_t> maxchannels:
+            channels_active[0] |= (<uint64_t> 1) << ichannel
+        if idtime > nbins[0] and idtime < <uint32_t> maxbins:
+            nbins[0] = idtime
+    elif ispecial == 2:
+        # marker record
+        nmarkers[0] += 1
+        if imarker & frame_change:
+            # frame marker
+            if lines_in_frame > y[0] + 1:
+                # not enough lines in frame
+                if nframes[0] == 1:
+                    skip_first_frame[0] = 1
+                else:
+                    skip_last_frame[0] = 1
+            else:
+                skip_last_frame[0] = 0
+            if not imarker & line_stop:
+                time_line_start[0] = UINT64_MAX
+            y[0] = 0
+        if imarker & line_stop:
+            # line stop marker
+            if (
+                time_line_start[0] != UINT64_MAX
+                and (lines_in_frame == 0 or lines_in_frame >= y[0])
+            ):
+                time_in_lines[0] += (overflow + itime) - time_line_start[0]
+            time_line_start[0] = UINT64_MAX
+        if imarker & line_start:
+            # line start marker
+            # TODO: add to time_in_lines if previous line did not stop?
+            time_line_start[0] = overflow + itime
+            if y[0] == 0:
+                # new frame starts at first line
+                # after start or frame change marker
+                nframes[0] += 1
+            y[0] += 1
+            if lines_in_frame == 0 or lines_in_frame >= y[0]:
+                nlines[0] += 1
 
 
 def decode_t3_point(
@@ -335,11 +588,11 @@ def decode_t3_point(
 
     sizet, sizec, sizeh = histogram.shape[:3]
 
-    stopt = startt + sizet * bint
-    stopc = startc + sizec * binc
-    stoph = starth + sizeh * binh
-
     with nogil:
+        stopt = startt + sizet * bint
+        stopc = startc + sizec * binc
+        stoph = starth + sizeh * binh
+
         overflow = 0
         iframe = 0
         iframe_binned = -1
@@ -431,13 +684,13 @@ def decode_t3_line(
 
     sizet, sizex, sizec, sizeh = histogram.shape[:4]
 
-    stopt = startt + sizet * bint
-    stopx = startx + sizex * binx
-    stopc = startc + sizec * binc
-    stoph = starth + sizeh * binh
-
     with nogil:
-        time_line_start = 0
+        stopt = startt + sizet * bint
+        stopx = startx + sizex * binx
+        stopc = startc + sizec * binc
+        stoph = starth + sizeh * binh
+
+        time_line_start = UINT64_MAX
         overflow = 0
         iframe = 0
         iframe_binned = -1
@@ -457,7 +710,7 @@ def decode_t3_line(
             if ispecial == 0:
                 # regular record
                 if (
-                    time_line_start == 0  # no line start marker yet
+                    time_line_start == UINT64_MAX  # no line start marker yet
                     or ichannel < startc
                     or ichannel >= stopc
                     or idtime < starth
@@ -480,7 +733,7 @@ def decode_t3_line(
             elif ispecial == 2:
                 # marker
                 if imarker & line_stop:
-                    time_line_start = 0
+                    time_line_start = UINT64_MAX
                     iframe += 1
                     if iframe == stopt:
                         break
@@ -533,8 +786,14 @@ def decode_t3_image(
     if scanline and pixels_in_line <= 0:
         raise ValueError(f'invalid {pixels_in_line=}')
 
-    if sinusoidal and pixel_at_time.size != line_time:
-        raise ValueError(f'invalid {pixel_at_time.size=} != {line_time=}')
+    if (
+        sinusoidal
+        and (pixel_at_time is None or pixel_at_time.size != line_time)
+    ):
+        sizey = 0 if pixel_at_time is None else pixel_at_time.size
+        raise ValueError(
+            f'invalid pixel_at_time.size={sizey} != {line_time=}'
+        )
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
@@ -556,14 +815,14 @@ def decode_t3_image(
 
     sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
 
-    stopt = startt + sizet * bint
-    stopy = starty + sizey * biny
-    stopx = startx + sizex * binx
-    stopc = startc + sizec * binc
-    stoph = starth + sizeh * binh
-    bidiv = starty % 2
-
     with nogil:
+        stopt = startt + sizet * bint
+        stopy = starty + sizey * biny
+        stopx = startx + sizex * binx
+        stopc = startc + sizec * binc
+        stoph = starth + sizeh * binh
+        bidiv = starty % 2
+
         time_line_start = UINT64_MAX
         overflow = 0
         iframe = -2 if skip_first_frame else -1
@@ -697,16 +956,11 @@ def decode_t3_histogram(
     """Decode PicoQuant T3 TTTR records to histogram per channel."""
     cdef:
         ssize_t nrecords = records.size
-        ssize_t i, nbins, nchannels, maxchannels
+        ssize_t i, nbins, nchannels
         uint64_t overflow
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        decode_func_t decode_func
 
-    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
-        raise ValueError(f'no decoder available for {format=:02x}')
-    if nbins == 0:
-        raise ValueError(f'not a T3 {format=:02x}')
     if startc < 0:
         raise ValueError(f'{startc=} < 0')
 
@@ -714,21 +968,61 @@ def decode_t3_histogram(
 
     with nogil:
         overflow = 0
-        for i in range(nrecords):
-            decode_func(
-                records[i],
-                &itime,
-                &idtime,
-                &ichannel,
-                &overflow,
-                &imarker,
-                &ispecial
-            )
-            ichannel -= <uint32_t> startc  # may underflow
-            if ispecial == 0 and ichannel < nchannels and idtime < nbins:
-                histogram[ichannel, idtime] += 1
-                # if wraparound:
-                #     histogram[ichannel, idtime % nbins] += 1
+        # dispatch on format so compiler can inline decoder and optimize loop
+        if format == 0x00010303:
+            # PicoHarpT3
+            for i in range(nrecords):
+                decode_pt3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels and idtime < nbins:
+                    histogram[ichannel, idtime] += 1
+        elif format in {
+            0x01010304,  # HydraHarp2T3
+            0x00010305,  # TimeHarp260NT3
+            0x00010306,  # TimeHarp260PT3
+            0x00010307,  # GenericT3 (MultiHarpT3 and Picoharp330T3)
+        }:
+            for i in range(nrecords):
+                decode_ht3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels and idtime < nbins:
+                    histogram[ichannel, idtime] += 1
+        elif format == 0x00010304:
+            # HydraHarpT3
+            for i in range(nrecords):
+                decode_ht3v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels and idtime < nbins:
+                    histogram[ichannel, idtime] += 1
+                    # if wraparound:
+                    #     histogram[ichannel, idtime % nbins] += 1
+        else:
+            with gil:
+                raise ValueError(f'no decoder available for {format=:02x}')
 
 
 def decode_t2_histogram(
@@ -741,19 +1035,14 @@ def decode_t2_histogram(
     """Decode PicoQuant T2 TTTR records to histogram per channel."""
     cdef:
         ssize_t nrecords = records.size
-        ssize_t i, ibin, nbins, nchannels, maxchannels
+        ssize_t i, ibin, nbins, nchannels
         uint64_t overflow
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        decode_func_t decode_func
 
     if bin_time == 0:
         raise ValueError(f'invalid {bin_time=}')
 
-    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
-        raise ValueError(f'no decoder available for {format=:02x}')
-    if nbins != 0:
-        raise ValueError(f'not a T2 {format=:02x}')
     if startc < 0:
         raise ValueError(f'{startc=} < 0')
 
@@ -761,22 +1050,68 @@ def decode_t2_histogram(
 
     with nogil:
         overflow = 0
-        for i in range(nrecords):
-            decode_func(
-                records[i],
-                &itime,
-                &idtime,
-                &ichannel,
-                &overflow,
-                &imarker,
-                &ispecial
-            )
-            ibin = <ssize_t> ((overflow + itime) // bin_time)
-            if ibin >= nbins:
-                break
-            ichannel -= <uint32_t> startc  # may underflow
-            if ispecial == 0 and ichannel < nchannels:
-                histogram[ichannel, ibin] += 1
+        # dispatch on format so compiler can inline decoder and optimize loop
+        if format == 0x00010203:
+            # PicoHarpT2
+            for i in range(nrecords):
+                decode_pt2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ibin = <ssize_t> ((overflow + itime) // bin_time)
+                if ibin >= nbins:
+                    break
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels:
+                    histogram[ichannel, ibin] += 1
+        elif format in {
+            0x01010204,  # HydraHarp2T2
+            0x00010205,  # TimeHarp260NT2
+            0x00010206,  # TimeHarp260PT2
+            0x00010207,  # GenericT2 (MultiHarpT2 and Picoharp330T2)
+        }:
+            for i in range(nrecords):
+                decode_ht2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ibin = <ssize_t> ((overflow + itime) // bin_time)
+                if ibin >= nbins:
+                    break
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels:
+                    histogram[ichannel, ibin] += 1
+        elif format == 0x00010204:
+            # HydraHarpT2
+            for i in range(nrecords):
+                decode_ht2v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                ibin = <ssize_t> ((overflow + itime) // bin_time)
+                if ibin >= nbins:
+                    break
+                ichannel -= <uint32_t> startc  # may underflow
+                if ispecial == 0 and ichannel < nchannels:
+                    histogram[ichannel, ibin] += 1
+        else:
+            with gil:
+                raise ValueError(f'no decoder available for {format=:02x}')
 
 
 def decode_t3_records(
@@ -787,47 +1122,102 @@ def decode_t3_records(
     """Decode PicoQuant T3 TTTR records."""
     cdef:
         ssize_t nrecords = min(records.size, decoded.size)
-        ssize_t i, nbins, maxchannels
+        ssize_t i
         uint64_t overflow
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        decode_func_t decode_func
-
-    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
-        raise ValueError(f'no decoder available for {format=:02x}')
-    if nbins == 0:
-        raise ValueError(f'not a T3 {format=:02x}')
 
     with nogil:
         overflow = 0
-        for i in range(nrecords):
-            decode_func(
-                records[i],
-                &itime,
-                &idtime,
-                &ichannel,
-                &overflow,
-                &imarker,
-                &ispecial
-            )
-            if ispecial == 0:
-                # regular record
-                decoded[i].time = overflow + itime
-                decoded[i].dtime = idtime
-                decoded[i].channel = ichannel
-                decoded[i].marker = 0
-            elif ispecial == 1:
-                # overflow
-                decoded[i].time = overflow + itime
-                decoded[i].dtime = -1
-                decoded[i].channel = -1
-                decoded[i].marker = 0
-            elif ispecial == 2:
-                # external marker
-                decoded[i].time = overflow + itime
-                decoded[i].dtime = -1
-                decoded[i].channel = -1
-                decoded[i].marker = imarker
+        # dispatch on format so compiler can inline decoder and optimize loop
+        if format == 0x00010303:
+            # PicoHarpT3
+            for i in range(nrecords):
+                decode_pt3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = idtime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        elif format in {
+            0x01010304,  # HydraHarp2T3
+            0x00010305,  # TimeHarp260NT3
+            0x00010306,  # TimeHarp260PT3
+            0x00010307,  # GenericT3 (MultiHarpT3 and Picoharp330T3)
+        }:
+            for i in range(nrecords):
+                decode_ht3(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = idtime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        elif format == 0x00010304:
+            # HydraHarpT3
+            for i in range(nrecords):
+                decode_ht3v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = idtime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].dtime = -1
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        else:
+            with gil:
+                raise ValueError(f'no decoder available for {format=:02x}')
 
 
 def decode_t2_records(
@@ -838,47 +1228,100 @@ def decode_t2_records(
     """Decode PicoQuant T2 TTTR records."""
     cdef:
         ssize_t nrecords = min(records.size, decoded.size)
-        ssize_t i, nbins, maxchannels
+        ssize_t i
         uint64_t overflow
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
-        decode_func_t decode_func
-
-    if init_format(format, &decode_func, &nbins, &maxchannels) != 0:
-        raise ValueError(f'no decoder available for {format=:02x}')
-    if nbins != 0:
-        raise ValueError(f'not a T2 {format=:02x}')
 
     with nogil:
         overflow = 0
-        for i in range(nrecords):
-            decode_func(
-                records[i],
-                &itime,
-                &idtime,
-                &ichannel,
-                &overflow,
-                &imarker,
-                &ispecial
-            )
-            if ispecial == 0:
-                # regular record
-                decoded[i].time = overflow + itime
-                decoded[i].channel = ichannel
-                decoded[i].marker = 0
-            elif ispecial == 1:
-                # overflow
-                decoded[i].time = overflow + itime
-                decoded[i].channel = -1
-                decoded[i].marker = 0
-            elif ispecial == 2:
-                # external marker
-                decoded[i].time = overflow + itime
-                decoded[i].channel = -1
-                decoded[i].marker = imarker
+        # dispatch on format so compiler can inline decoder and optimize loop
+        if format == 0x00010203:
+            # PicoHarpT2
+            for i in range(nrecords):
+                decode_pt2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        elif format in {
+            0x01010204,  # HydraHarp2T2
+            0x00010205,  # TimeHarp260NT2
+            0x00010206,  # TimeHarp260PT2
+            0x00010207,  # GenericT2 (MultiHarpT2 and Picoharp330T2)
+        }:
+            for i in range(nrecords):
+                decode_ht2(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        elif format == 0x00010204:
+            # HydraHarpT2
+            for i in range(nrecords):
+                decode_ht2v1(
+                    records[i],
+                    &itime,
+                    &idtime,
+                    &ichannel,
+                    &overflow,
+                    &imarker,
+                    &ispecial
+                )
+                if ispecial == 0:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = ichannel
+                    decoded[i].marker = 0
+                elif ispecial == 1:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = 0
+                elif ispecial == 2:
+                    decoded[i].time = overflow + itime
+                    decoded[i].channel = -1
+                    decoded[i].marker = imarker
+        else:
+            with gil:
+                raise ValueError(f'no decoder available for {format=:02x}')
 
 
-cdef void decode_pt3(
+# Decode functions only set outputs relevant to each record type.
+# Callers must check special before using channel, dtime, or marker,
+# which may be stale from the previous call.
+
+cdef inline void decode_pt3(
     const uint32_t record,
     uint32_t* time,  # nsync
     uint32_t* dtime,
@@ -912,7 +1355,7 @@ cdef void decode_pt3(
         dtime[0] = 0
 
 
-cdef void decode_pt2(
+cdef inline void decode_pt2(
     const uint32_t record,
     uint32_t* time,  # timetag
     uint32_t* dtime,  # not used
@@ -946,7 +1389,7 @@ cdef void decode_pt2(
             marker[0] = tmp
 
 
-cdef void decode_ht3(
+cdef inline void decode_ht3(
     const uint32_t record,
     uint32_t* time,  # nsync
     uint32_t* dtime,
@@ -977,9 +1420,12 @@ cdef void decode_ht3(
             # marker
             special[0] = 2
             marker[0] = tmp
+        else:
+            # reserved; treat as overflow/skip
+            special[0] = 1
 
 
-cdef void decode_ht3v1(
+cdef inline void decode_ht3v1(
     const uint32_t record,
     uint32_t* time,  # nsync
     uint32_t* dtime,
@@ -1007,9 +1453,12 @@ cdef void decode_ht3v1(
             # marker
             special[0] = 2
             marker[0] = tmp
+        else:
+            # reserved; treat as overflow/skip
+            special[0] = 1
 
 
-cdef void decode_ht2(
+cdef inline void decode_ht2(
     const uint32_t record,
     uint32_t* time,  # timetag
     uint32_t* dtime,  # not used
@@ -1044,9 +1493,12 @@ cdef void decode_ht2(
             # marker
             special[0] = 2
             marker[0] = tmp
+        else:
+            # reserved; treat as overflow/skip
+            special[0] = 1
 
 
-cdef void decode_ht2v1(
+cdef inline void decode_ht2v1(
     const uint32_t record,
     uint32_t* time,  # timetag
     uint32_t* dtime,  # not used
@@ -1078,6 +1530,9 @@ cdef void decode_ht2v1(
             # marker
             special[0] = 2
             marker[0] = tmp
+        else:
+            # reserved; treat as overflow/skip
+            special[0] = 1
 
 
 def encode_t3_image(
@@ -1089,23 +1544,20 @@ def encode_t3_image(
     const uint32_t line_stop,  # mask
     const uint32_t frame_change,  # mask
 ):
-    """Return GenericT3 records from TCSPC image histogram.
-
-    No bounds checking is performed writing to records array.
-
-    """
+    """Return GenericT3 records from TCSPC image histogram."""
     # TODO: frame and line markers may be combined in one record
     # TODO: record photons across channels at same time (slower)
     # TODO: randomize photon arrival times at fixed count rate
 
     cdef:
         ssize_t sizet, sizey, sizex, sizec, sizeh
-        ssize_t t, y, x, c, h, nrecords
+        ssize_t t, y, x, c, h, nrecords, maxrecords
         uint_t count
         uint32_t time, time_in_pixel, overflow, maxtime, maxoverflow, i
         encode_func_t encode
 
     sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
+    maxrecords = records.size
 
     if format == 0x00010303:
         # PicoHarpT3/PicoHarp300
@@ -1129,11 +1581,16 @@ def encode_t3_image(
             for y in range(sizey):
                 # line
 
+                if nrecords >= maxrecords:
+                    nrecords = -1
+                    break
                 # line start marker
                 records[nrecords] = encode(time, 0, 0, 0, line_start)
                 nrecords += 1
 
                 for x in range(sizex):
+                    if nrecords < 0:
+                        break
                     # pixel
                     time_in_pixel = 0
 
@@ -1144,6 +1601,9 @@ def encode_t3_image(
                             # bin
                             for count in range(histogram[t, y, x, c, h]):
                                 # photon
+                                if nrecords >= maxrecords:
+                                    nrecords = -1
+                                    break
                                 records[nrecords] = encode(
                                     time, <uint32_t> h, <uint32_t> c, 0, 0
                                 )
@@ -1154,16 +1614,26 @@ def encode_t3_image(
                                 if time == maxtime:
                                     # overflow
                                     time = 0
+                                    if nrecords >= maxrecords:
+                                        nrecords = -1
+                                        break
                                     records[nrecords] = encode(0, 0, 0, 1, 0)
                                     nrecords += 1
 
                                 time_in_pixel += 1
                                 if time_in_pixel == pixel_time:
                                     break
+                            if nrecords < 0:
+                                break
                             if time_in_pixel == pixel_time:
                                 break
+                        if nrecords < 0:
+                            break
                         if time_in_pixel == pixel_time:
                             break
+
+                    if nrecords < 0:
+                        break
 
                     # move to next pixel
                     # TODO: calculate overflows
@@ -1175,27 +1645,46 @@ def encode_t3_image(
                             time = 0
                             overflow += 1
                             if overflow == maxoverflow:
+                                if nrecords >= maxrecords:
+                                    nrecords = -1
+                                    break
                                 records[nrecords] = encode(
                                     0, 0, 0, overflow, 0
                                 )
                                 nrecords += 1
                                 overflow = 0
-                    if overflow > 0:
-                        records[nrecords] = encode(0, 0, 0, overflow, 0)
-                        nrecords += 1
+                    if nrecords >= 0 and overflow > 0:
+                        if nrecords >= maxrecords:
+                            nrecords = -1
+                        else:
+                            records[nrecords] = encode(0, 0, 0, overflow, 0)
+                            nrecords += 1
 
+                if nrecords < 0:
+                    break
+                if nrecords >= maxrecords:
+                    nrecords = -1
+                    break
                 # line end marker
                 records[nrecords] = encode(time, 0, 0, 0, line_stop)
                 nrecords += 1
 
+            if nrecords < 0:
+                break
+            if nrecords >= maxrecords:
+                nrecords = -1
+                break
             # frame change marker
             records[nrecords] = encode(time, 0, 0, 0, frame_change)
             nrecords += 1
 
+        if nrecords < 0:
+            pass  # error: records array too small
+
     return nrecords
 
 
-cdef uint32_t encode_pt3(
+cdef inline uint32_t encode_pt3(
     const uint32_t time,
     const uint32_t dtime,
     const uint32_t channel,
@@ -1224,7 +1713,7 @@ cdef uint32_t encode_pt3(
     return record
 
 
-cdef uint32_t encode_ht3(
+cdef inline uint32_t encode_ht3(
     const uint32_t time,
     const uint32_t dtime,
     const uint32_t channel,
@@ -1240,7 +1729,7 @@ cdef uint32_t encode_ht3(
     if marker != 0:
         # 1 bit special
         record |= <uint32_t> 0x80000000
-        # 3 bit marker instead of channel
+        # 4 bit marker instead of channel
         record |= marker << <uint32_t> 25
         # record |= (marker & 0xf) << <uint32_t> 25
     elif overflow != 0:
