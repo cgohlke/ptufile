@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.2.6
+:Version: 2026.3.21
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,11 +64,11 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.1.0 (recommended)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.12, 3.14.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.2.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.28 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.3.3 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -76,6 +76,13 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.3.21
+
+- Add bounds checking to encode_t3_image function.
+- Use format-dispatch in hot decode loops to allow compiler inlining.
+- Build wheels on Windows with LLVM (30% faster decoding than MSVC).
+- Drop support for Python 3.11.
 
 2026.2.6
 
@@ -116,22 +123,6 @@ Revisions
 - Support Python 3.14.
 
 2025.2.20
-
-- Rename PqFileMagic to PqFileType (breaking).
-- Rename PqFile.magic to PqFile.type (breaking).
-- Add PQDAT and SPQR file types.
-
-2025.2.12
-
-- Add options to specify file open modes to PqFile and PtuFile.read_records.
-- Add convenience properties to PqFile and PtuFile.
-- Cache records read from file.
-
-2025.1.13
-
-- Fall back to file size if TTResult_NumberOfRecords is zero (#2).
-
-2024.12.28
 
 - …
 
@@ -295,7 +286,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.2.6'
+__version__ = '2026.3.21'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -336,7 +327,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import TYPE_CHECKING, final, overload
+from typing import TYPE_CHECKING, final, overload, override
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -346,11 +337,10 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike, DTypeLike, NDArray
     from xarray import DataArray
 
-    Dimension = Literal['T', 'C', 'H']
-    OutputType = str | IO[bytes] | NDArray[Any] | None
-
-
 import numpy
+
+type Dimension = Literal['T', 'C', 'H']
+type OutputType = str | IO[bytes] | NDArray[Any] | None
 
 
 @overload
@@ -762,11 +752,15 @@ class PtuWriter:
 
         header = b''.join(header_list)
         offset = header.find(b'TTResult_NumberOfRecords')
-        assert offset > 0
+        if offset < 0:
+            msg = 'TTResult_NumberOfRecords tag not found in header'
+            raise RuntimeError(msg)
         self._number_records_offset = offset + 40
 
         offset = header.find(b'ImgHdr_MaxFrames')
-        assert offset > 0
+        if offset < 0:
+            msg = 'ImgHdr_MaxFrames tag not found in header'
+            raise RuntimeError(msg)
         self._number_frames_offset = offset + 40
 
         if isinstance(file, (str, os.PathLike)):
@@ -832,10 +826,12 @@ class PtuWriter:
             int(2 ** (self._frame_change - 1)),
         )
         if number_records < 0:
-            msg = f'{records.size=} < 0'
+            msg = f'{number_records=} < 0'
             raise ValueError(msg)
 
-        assert self._fh is not None
+        if self._fh is None:
+            msg = 'file handle is closed'
+            raise RuntimeError(msg)
         self._fh.write(records[:number_records].tobytes())
 
         self._number_records += number_records
@@ -937,12 +933,15 @@ class BinaryFile:
             File name or seekable binary stream.
         mode:
             File open mode if `file` is a file name.
-            The default is 'r'. Files are always opened in binary mode.
+            If not specified, defaults to 'r'. Files are always opened
+            in binary mode.
 
     Raises:
+        TypeError:
+            File is a text stream, or an unsupported type.
         ValueError:
             Invalid file name, extension, or stream.
-            File is not a binary or seekable stream.
+            File stream is not seekable.
 
     """
 
@@ -975,8 +974,9 @@ class BinaryFile:
                 mode = 'r'
             else:
                 if mode[-1:] == 'b':
+                    # accept 'rb'/'r+b'
                     mode = mode[:-1]  # type: ignore[assignment]
-                if mode not in {'r', 'r+'}:
+                if mode not in ('r', 'r+'):
                     msg = f'invalid {mode=!r}'
                     raise ValueError(msg)
             self._path = os.path.abspath(file)
@@ -986,7 +986,9 @@ class BinaryFile:
         elif hasattr(file, 'seek'):
             # binary stream: open file, BytesIO, fsspec LocalFileOpener
             if isinstance(file, io.TextIOBase):  # type: ignore[unreachable]
-                msg = f'{file=!r} is not open in binary mode'
+                msg = (  # type: ignore[unreachable]
+                    f'{file=!r} is not open in binary mode'
+                )
                 raise TypeError(msg)
 
             self._fh = file
@@ -996,9 +998,9 @@ class BinaryFile:
                 msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
-                self._path = os.path.normpath(file.path)
+                self._path = os.path.abspath(file.path)
             elif hasattr(file, 'name'):
-                self._path = os.path.normpath(file.name)
+                self._path = os.path.abspath(file.name)
 
         elif hasattr(file, 'open'):
             # fsspec OpenFile
@@ -1012,20 +1014,18 @@ class BinaryFile:
                 msg = f'{file=!r} is not seekable'
                 raise ValueError(msg) from exc
             if hasattr(file, 'path'):
-                self._path = os.path.normpath(file.path)
+                self._path = os.path.abspath(file.path)
 
         else:
             msg = f'cannot handle {type(file)=}'
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         if hasattr(file, 'name') and file.name:
             self._name = os.path.basename(file.name)
         elif self._path:
             self._name = os.path.basename(self._path)
-        elif isinstance(file, io.BytesIO):
-            self._name = 'BytesIO'
-        # else:
-        #     self._name = f'{type(file)}'
+        else:
+            self._name = type(file).__name__
 
     @property
     def filehandle(self) -> IO[bytes]:
@@ -1034,17 +1034,17 @@ class BinaryFile:
 
     @property
     def filepath(self) -> str:
-        """Path to file."""
+        """Absolute path to file, or empty string if unavailable."""
         return self._path
 
     @property
     def filename(self) -> str:
-        """Name of file or empty if binary stream."""
+        """Name of file, or empty if no path is available."""
         return os.path.basename(self._path)
 
     @property
     def dirname(self) -> str:
-        """Directory containing file or empty if binary stream."""
+        """Directory containing file, or empty if no path is available."""
         return os.path.dirname(self._path)
 
     @property
@@ -1068,12 +1068,10 @@ class BinaryFile:
 
     def close(self) -> None:
         """Close file."""
+        self._closed = True  # always report file as closed
         if self._close:
-            try:
-                self._closed = True
+            with contextlib.suppress(Exception):
                 self._fh.close()
-            except Exception:  # noqa: S110
-                pass
 
     def __enter__(self) -> Self:
         return self
@@ -1087,15 +1085,13 @@ class BinaryFile:
         self.close()
 
     def __repr__(self) -> str:
-        if self._name:
-            return f'<{self.__class__.__name__} {self._name!r}>'
-        return f'<{self.__class__.__name__}>'
+        return f'<{self.__class__.__name__} {self._name!r}>'
 
 
 class PqFile(BinaryFile):
     """PicoQuant unified tagged file.
 
-    PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, and SPQR files contain
+    PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, and SPQR files contain
     measurement metadata and settings encoded as unified tags.
 
     ``PqFile`` and subclass instances are not thread safe.
@@ -1349,6 +1345,7 @@ class PqFile(BinaryFile):
         except Exception:
             return None
 
+    @override
     @property
     def attrs(self) -> dict[str, Any]:
         """Selected metadata as dict."""
@@ -1364,6 +1361,7 @@ class PqFile(BinaryFile):
             'tags': self.tags,
         }
 
+    @override
     def __enter__(self) -> Self:
         return self
 
@@ -1425,6 +1423,7 @@ class PhuFile(PqFile):
     ) -> None:
         super().__init__(file, mode=mode)
 
+    @override
     def __enter__(self) -> Self:
         return self
 
@@ -1463,6 +1462,7 @@ class PhuFile(PqFile):
     #     """Number of bits per histogram bin."""
     #     return int(self.tags.get('HistoResult_BitsPerBin', 32))
 
+    @override
     @property
     def attrs(self) -> dict[str, Any]:
         """Selected metadata as dict."""
@@ -1657,12 +1657,14 @@ class PtuFile(PqFile):
         self._asxarray = False
         self._cache = True
 
+    @override
     def __enter__(self) -> Self:
         return self
 
     def __getitem__(self, key: Any, /) -> NDArray[Any] | DataArray:
         return self.decode_image(key, keepdims=False)
 
+    @override
     def close(self) -> None:
         """Close file handle and free resources."""
         del self._records  # close numpy.memmap file handle
@@ -1785,7 +1787,7 @@ class PtuFile(PqFile):
 
     @property
     def number_lines(self) -> int:
-        """Number of lines marker pairs."""
+        """Number of line marker pairs."""
         return self._info.lines
 
     @property
@@ -1814,12 +1816,16 @@ class PtuFile(PqFile):
 
     @property
     def number_bins_max(self) -> int:
-        """Maximum delay time for record type."""
+        """Maximum number of delay-time bins for record type."""
         return self._info.bins
 
     @property
     def number_bins(self) -> int:
-        """Highest delay time with photons. Not available for T2 records."""
+        """Number of bins up to the largest occupied delay-time bin.
+
+        Not available for T2 records.
+
+        """
         return self._info.bins_used
 
     @property
@@ -1889,7 +1895,7 @@ class PtuFile(PqFile):
 
     @property
     def global_frame_time(self) -> int:
-        """Global time per image, line, or point scan cycle, excluding retrace.
+        """Global time per image, line, or point scan cycle.
 
         Multiply with global resolution to get time in s.
 
@@ -2024,7 +2030,7 @@ class PtuFile(PqFile):
 
     @property
     def use_xarray(self) -> bool:
-        """Return histograms as ``xarray.DataArray``."""
+        """Slicing and decode methods return ``xarray.DataArray``."""
         return self._asxarray
 
     @use_xarray.setter
@@ -2194,6 +2200,7 @@ class PtuFile(PqFile):
         coords['H'] = self._coords_h
         return coords
 
+    @override
     @property
     def attrs(self) -> dict[str, Any]:
         """Selected metadata as dict."""
@@ -2308,7 +2315,7 @@ class PtuFile(PqFile):
             records:
                 Encoded TTTR records. By default, read records from file.
             out:
-                Specifies where to decode records.
+                Array where decoded records are stored.
                 If ``None``, create a new NumPy recarray in main memory.
                 If ``'memmap'``, create a memory-mapped recarray in a
                 temporary file.
@@ -2406,14 +2413,14 @@ class PtuFile(PqFile):
                 Global time per sample for T2 mode.
                 The default is :py:meth:`PtuFile.global_pixel_time`.
             dtime:
-                Specifies number of bins in histogram.
+                Number of bins in histogram.
                 If 0, return :py:attr:`number_bins_in_period` bins.
                 If > 0, return up to specified bin.
             asxarray:
                 If true, return ``xarray.DataArray``, else ``numpy.ndarray``
                 (default).
             out:
-                Specifies where to decode histogram.
+                Array where decoded histogram is stored.
                 If ``None``, create a new NumPy array in main memory.
                 If ``'memmap'``, create a memory-mapped array in a
                 temporary file.
@@ -2597,7 +2604,7 @@ class PtuFile(PqFile):
                 If < 0, integrate channel axis, else return specified channel.
                 Overrides ``selection`` for axis ``C``.
             dtime:
-                Specifies number of bins in image histogram.
+                Number of bins in image histogram.
                 If 0, return :py:attr:`number_bins_in_period` bins.
                 If < 0, integrate delay time axis.
                 If > 0, return up to specified bin.
@@ -2618,7 +2625,7 @@ class PtuFile(PqFile):
                 If true, return ``xarray.DataArray``, else ``numpy.ndarray``
                 (default).
             out:
-                Specifies where to decode image histogram.
+                Array where decoded image histogram is stored.
                 If ``None``, create a new NumPy array in main memory.
                 If ``'memmap'``, create a memory-mapped array in a
                 temporary file.
@@ -2796,7 +2803,7 @@ class PtuFile(PqFile):
                 dtype=numpy.uint16,  # should be enough for pixels_in_line
             )
         else:
-            pixel_at_time = numpy.empty(0, dtype=numpy.uint16)
+            pixel_at_time = None
 
         if dtype is None:
             dtype = self._dtype
@@ -2837,7 +2844,7 @@ class PtuFile(PqFile):
                 self.pixels_in_line,
                 global_pixel_time,
                 global_line_time,
-                pixel_at_time,
+                pixel_at_time if self.is_sinusoidal else None,
                 self.line_start_mask,
                 self.line_stop_mask,
                 self.frame_change_mask,
@@ -2947,7 +2954,7 @@ class PtuFile(PqFile):
                 If < 0, integrate channel axis, else show specified channel.
                 By default, all channels are shown. Applies to T3 images.
             dtime:
-                Specifies number of bins in T3 histograms.
+                Number of bins in T3 histograms.
                 If < 0 (default), integrate delay time axis of images.
                 If 0, show :py:attr:`number_bins_in_period` bins.
                 If > 0, show histograms up to specified bin.
@@ -3327,7 +3334,7 @@ class PtuInfo:
     """Maximum delay time for record type."""
 
     bins_used: int
-    """Highest delay time observed. Not available for T2 records."""
+    """Number of bins up to the largest occupied delay-time bin."""
 
     skip_first_frame: bool
     """First frame of multi-frame image is incomplete."""
@@ -3771,6 +3778,9 @@ def main(argv: list[str] | None = None) -> int:
                         t.start()
                         ptu_info = ptu._info
                         t.print('scan records')
+                        # t.start()
+                        # ptu.decode_records()
+                        # t.print('decode records')
                         print()
                         print(ptu)
                         print(ptu_info)
