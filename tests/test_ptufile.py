@@ -31,7 +31,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2026.2.6
+:Version: 2026.3.21
 
 """
 
@@ -183,7 +183,11 @@ class TestBinaryFile:
         assert fh.filehandle.tell() == 10
         assert fh.filehandle.read(1) == b'\n'
         fh.close()
-        assert fh.closed is closed
+        # underlying filehandle may still be be open if
+        # BinaryFile was given an open filehandle
+        assert fh._fh.closed is closed
+        # BinaryFile always reports itself as closed after close() is called
+        assert fh.closed
 
     def test_str(self):
         """Test BinaryFile with str path."""
@@ -263,6 +267,7 @@ class TestBinaryFile:
             # mock fsspec OpenFile without seek/tell methods
             @staticmethod
             def open(*args, **kwargs):
+                del args, kwargs
                 return File()
 
         with pytest.raises(ValueError):
@@ -275,7 +280,7 @@ class TestBinaryFile:
             # mock non-file object
             pass
 
-        with pytest.raises(ValueError):
+        with pytest.raises(TypeError):
             BinaryFile(File)
 
     def test_invalid_mode(self):
@@ -2475,10 +2480,10 @@ def test_ptu_numcodecs():
 
 
 @pytest.mark.skipif(
-    not hasattr(sys, '_is_gil_enabled'), reason='GIL status not available'
+    not hasattr(sys, '_is_gil_enabled'), reason='Python < 3.13'
 )
 def test_gil_enabled():
-    """Test that GIL is disabled on thread-free Python."""
+    """Test that GIL state is consistent with build configuration."""
     assert sys._is_gil_enabled() != sysconfig.get_config_var('Py_GIL_DISABLED')
 
 
