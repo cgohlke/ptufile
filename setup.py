@@ -10,22 +10,68 @@ import sysconfig
 import numpy
 from setuptools import Extension, setup
 
-buildnumber = ''
-
 DEBUG = bool(os.environ.get('CG_DEBUG', ''))
 LIMITED_API = os.environ.get('CG_LIMITED_API', '1').lower() in ('1', 'true')
+LLVM_PATH = os.environ.get('CG_LLVM_PATH', '')
+
+if LLVM_PATH:
+    # Redirect the MSVC compiler class to use clang-cl/lld-link.
+    # setuptools on Windows ignores CC; patching MSVCCompiler.initialize
+    # is the only reliable way to swap the compiler executable.
+    import importlib
+    from collections.abc import Callable
+    from typing import Any
+
+    clang_cl = os.path.join(LLVM_PATH, 'bin', 'clang-cl.exe')
+    lld_link = os.path.join(LLVM_PATH, 'bin', 'lld-link.exe')
+
+    for modname in (
+        'setuptools._distutils._msvccompiler',
+        'distutils._msvccompiler',
+    ):
+        try:
+            mod = importlib.import_module(modname)
+
+            def make_clang_init(
+                orig: Callable[..., None], cc: str, linker: str
+            ) -> Callable[..., None]:
+                """Return patched MSVCCompiler.initialize method using LLVM."""
+
+                def clang_init(
+                    self: Any, plat_name: str | None = None
+                ) -> None:
+                    orig(self, plat_name)
+                    self.cc = cc
+                    self.linker = linker
+                    # remove MSVC flags unsupported by clang-cl
+                    for attr in ('compile_options', 'compile_options_debug'):
+                        opts = getattr(self, attr, None)
+                        if opts is not None:
+                            setattr(
+                                self,
+                                attr,
+                                [f for f in opts if f != '/GL'],
+                            )
+
+                return clang_init
+
+            mod.MSVCCompiler.initialize = make_clang_init(
+                mod.MSVCCompiler.initialize, clang_cl, lld_link
+            )
+        except (ImportError, AttributeError):
+            pass
 
 if LIMITED_API and not sysconfig.get_config_var('Py_GIL_DISABLED'):
     py_limited_api = True
     define_macros = [
-        ('Py_LIMITED_API', 0x030B0000),
+        ('Py_LIMITED_API', 0x030C0000),
         ('CYTHON_LIMITED_API', '1'),
     ]
-    options = {'bdist_wheel': {'py_limited_api': 'cp311'}}
+    setup_options = {'bdist_wheel': {'py_limited_api': 'cp312'}}
 else:
     py_limited_api = False
     define_macros = []
-    options = {}
+    setup_options = {}
 
 
 def search(pattern: str, string: str, flags: int = 0) -> str:
@@ -59,7 +105,6 @@ with open('ptufile/ptufile.py', encoding='utf-8') as fh:
     code = fh.read()
 
 version = search(r"__version__ = '(.*?)'", code).replace('.x.x', '.dev0')
-version += ('.' + buildnumber) if buildnumber else ''
 
 description = search(r'"""(.*)\.(?:\r\n|\r|\n)', code)
 
@@ -75,7 +120,7 @@ readme = '\n'.join(
 if 'sdist' in sys.argv:
     # update README, LICENSE, and CHANGES files
 
-    with open('README.rst', 'w', encoding='utf-8') as fh:
+    with open('README.rst', 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(fix_docstring_examples(readme))
 
     license = search(
@@ -85,7 +130,7 @@ if 'sdist' in sys.argv:
     )
     license = license.replace('# ', '').replace('#', '')
 
-    with open('LICENSE', 'w', encoding='utf-8') as fh:
+    with open('LICENSE', 'w', encoding='utf-8', newline='\n') as fh:
         fh.write('BSD-3-Clause license\n\n')
         fh.write(license)
 
@@ -99,8 +144,8 @@ if 'sdist' in sys.argv:
         old = fh.read()
 
     old = old.split(revisions.splitlines()[-1])[-1]
-    with open('CHANGES.rst', 'w', encoding='utf-8') as fh:
-        fh.write(revisions.strip())
+    with open('CHANGES.rst', 'w', encoding='utf-8', newline='\n') as fh:
+        fh.write(revisions.replace('---------', '=========').strip())
         fh.write(old)
 
 ext_modules = [
@@ -113,7 +158,9 @@ ext_modules = [
             ('NPY_NO_DEPRECATED_API', 'NPY_2_0_API_VERSION'),
         ],
         py_limited_api=py_limited_api,
-        extra_compile_args=['/Zi', '/Od'] if DEBUG else [],
+        extra_compile_args=(
+            ['/Zi', '/Od'] if DEBUG else ['/GS-'] if LLVM_PATH else []
+        ),
         extra_link_args=['-debug:full'] if DEBUG else [],
         include_dirs=[numpy.get_include()],
     )
@@ -136,9 +183,9 @@ setup(
     },
     packages=['ptufile'],
     package_data={'ptufile': ['py.typed']},
-    entry_points={'console_scripts': ['ptufile = ptufile.__main__:main']},
-    python_requires='>=3.11',
-    install_requires=['numpy'],
+    entry_points={'console_scripts': ['ptufile = ptufile.ptufile:main']},
+    python_requires='>=3.12',
+    install_requires=['numpy>=2.0'],
     extras_require={
         'all': [
             'xarray',
@@ -149,8 +196,7 @@ setup(
         ],
     },
     ext_modules=ext_modules,
-    options=options,
-    zip_safe=False,
+    options=setup_options,
     platforms=['any'],
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -159,7 +205,6 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Cython',
         'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
         'Programming Language :: Python :: 3.13',
         'Programming Language :: Python :: 3.14',
