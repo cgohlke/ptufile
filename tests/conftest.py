@@ -12,7 +12,7 @@ if os.environ.get('VSCODE_CWD'):
     )
 
 
-def pytest_report_header(config: object) -> str:
+def pytest_report_header(config):
     """Return pytest report header."""
     try:
         import ptufile
@@ -24,3 +24,8 @@ def pytest_report_header(config: object) -> str:
         )
     except Exception as exc:
         return f'pytest_report_header failed: {exc!s}'
+
+
+collect_ignore = ['data']
+
+# mypy: ignore-errors
