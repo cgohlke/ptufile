@@ -1,1 +1,0 @@
-Obtained from https://schuler.bioc.uzh.ch/programs/
