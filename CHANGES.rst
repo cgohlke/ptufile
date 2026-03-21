@@ -1,5 +1,12 @@
 Revisions
----------
+=========
+
+2026.3.21
+
+- Add bounds checking to encode_t3_image function.
+- Use format-dispatch in hot decode loops to allow compiler inlining.
+- Build wheels on Windows with LLVM (30% faster decoding than MSVC).
+- Drop support for Python 3.11.
 
 2026.2.6
 
