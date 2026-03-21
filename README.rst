@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.2.6
+:Version: 2026.3.21
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,11 +37,11 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.11.9, 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.2
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.1.0 (recommended)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.12, 3.14.3 64-bit
+- `NumPy <https://pypi.org/project/numpy>`_ 2.4.3
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.2.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.1.28 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.3.3 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -49,6 +49,13 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.3.21
+
+- Add bounds checking to encode_t3_image function.
+- Use format-dispatch in hot decode loops to allow compiler inlining.
+- Build wheels on Windows with LLVM (30% faster decoding than MSVC).
+- Drop support for Python 3.11.
 
 2026.2.6
 
@@ -89,22 +96,6 @@ Revisions
 - Support Python 3.14.
 
 2025.2.20
-
-- Rename PqFileMagic to PqFileType (breaking).
-- Rename PqFile.magic to PqFile.type (breaking).
-- Add PQDAT and SPQR file types.
-
-2025.2.12
-
-- Add options to specify file open modes to PqFile and PtuFile.read_records.
-- Add convenience properties to PqFile and PtuFile.
-- Cache records read from file.
-
-2025.1.13
-
-- Fall back to file size if TTResult_NumberOfRecords is zero (#2).
-
-2024.12.28
 
 - …
 
