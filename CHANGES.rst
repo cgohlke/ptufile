@@ -1,6 +1,15 @@
 Revisions
 =========
 
+2026.6.6
+
+- Remove memmap parameter from PtuFile.read_records (breaking).
+- Return copy of records from PtuFile.read_records by default (breaking).
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map PTU files.
+- Drop support for numpy 2.0 (SPEC0).
+- Support Python 3.15.
+
 2026.3.21
 
 - Add bounds checking to encode_t3_image function.
