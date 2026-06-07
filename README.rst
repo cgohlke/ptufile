@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.3.21
+:Version: 2026.6.6
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,27 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.2.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.3.3 (optional)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.4.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.9 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.6.1 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.4 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.5 (build)
 
 Revisions
 ---------
+
+2026.6.6
+
+- Remove memmap parameter from PtuFile.read_records (breaking).
+- Return copy of records from PtuFile.read_records by default (breaking).
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map PTU files.
+- Drop support for numpy 2.0 (SPEC0).
+- Support Python 3.15.
 
 2026.3.21
 
@@ -110,6 +119,11 @@ components and instruments.
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
+
+All PicoQuant unified tagged formats use the same basic layout:
+a file header followed by typed tags and an optional data block. PTU is
+the main container for TTTR event streams, whereas related formats store
+histograms, instrument settings, analysis results, or other auxiliary data.
 
 The following features are currently not implemented due to the lack of
 test files or documentation: PT2 and PT3 files, decoding images from
