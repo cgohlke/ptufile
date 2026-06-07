@@ -179,13 +179,13 @@ setup(
     project_urls={
         'Bug Tracker': 'https://github.com/cgohlke/ptufile/issues',
         'Source Code': 'https://github.com/cgohlke/ptufile',
-        # 'Documentation': 'https://',
+        'Documentation': 'https://www.cgohlke.com/docs/ptufile/',
     },
     packages=['ptufile'],
     package_data={'ptufile': ['py.typed']},
     entry_points={'console_scripts': ['ptufile = ptufile.ptufile:main']},
     python_requires='>=3.12',
-    install_requires=['numpy>=2.0'],
+    install_requires=['numpy>=2.1'],
     extras_require={
         'all': [
             'xarray',
@@ -208,5 +208,6 @@ setup(
         'Programming Language :: Python :: 3.12',
         'Programming Language :: Python :: 3.13',
         'Programming Language :: Python :: 3.14',
+        'Programming Language :: Python :: 3.15',
     ],
 )
