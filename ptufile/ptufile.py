@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.3.21
+:Version: 2026.6.6
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,27 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.12, 3.14.3 64-bit
-- `NumPy <https://pypi.org/project/numpy>`_ 2.4.3
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.2.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.8 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.3.3 (optional)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.4.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.9 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.6.1 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.4 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.5 (build)
 
 Revisions
 ---------
+
+2026.6.6
+
+- Remove memmap parameter from PtuFile.read_records (breaking).
+- Return copy of records from PtuFile.read_records by default (breaking).
+- Add options for memory-mapping and locked reading to BinaryFile.
+- Add option to memory-map PTU files.
+- Drop support for numpy 2.0 (SPEC0).
+- Support Python 3.15.
 
 2026.3.21
 
@@ -137,6 +146,11 @@ components and instruments.
 The PicoQuant unified file formats are documented at the
 `PicoQuant-Time-Tagged-File-Format-Demos
 <https://github.com/PicoQuant/PicoQuant-Time-Tagged-File-Format-Demos/tree/master/doc>`_.
+
+All PicoQuant unified tagged formats use the same basic layout:
+a file header followed by typed tags and an optional data block. PTU is
+the main container for TTTR event streams, whereas related formats store
+histograms, instrument settings, analysis results, or other auxiliary data.
 
 The following features are currently not implemented due to the lack of
 test files or documentation: PT2 and PT3 files, decoding images from
@@ -286,7 +300,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.3.21'
+__version__ = '2026.6.6'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -321,9 +335,11 @@ import enum
 import io
 import logging
 import math
+import mmap
 import os
 import struct
 import sys
+import threading
 import uuid
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -357,6 +373,7 @@ def imread(
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
+    memmap: bool = False,
     asxarray: Literal[False] = ...,
     out: OutputType = None,
 ) -> NDArray[Any]: ...
@@ -376,6 +393,7 @@ def imread(
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
+    memmap: bool = False,
     asxarray: Literal[True] = ...,
     out: OutputType = None,
 ) -> DataArray: ...
@@ -395,6 +413,7 @@ def imread(
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
+    memmap: bool = False,
     asxarray: bool = False,
     out: OutputType = None,
 ) -> NDArray[Any] | DataArray: ...
@@ -413,6 +432,7 @@ def imread(
     bishift: int | None = None,
     trimdims: Sequence[Dimension] | str | None = None,
     keepdims: bool = True,
+    memmap: bool = False,
     asxarray: bool = False,
     out: OutputType = None,
 ) -> NDArray[Any] | DataArray:
@@ -424,7 +444,7 @@ def imread(
         selection, dtype, channel, frame, dtime, pixel_time, bishift,\
         keepdims, asxarray, out:
             Passed to :py:meth:`PtuFile.decode_image`.
-        trimdims:
+        trimdims, memmap:
             Passed to :py:class:`PtuFile`.
 
     Returns:
@@ -432,7 +452,7 @@ def imread(
             Decoded TTTR T3 records as up to 5-dimensional image array.
 
     """
-    with PtuFile(file, trimdims=trimdims) as ptu:
+    with PtuFile(file, trimdims=trimdims, memmap=memmap) as ptu:
         return ptu.decode_image(
             selection,
             dtype=dtype,
@@ -472,7 +492,7 @@ def imwrite(
         data:
             TCSPC histogram image stack.
             The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
-            or 'TYXH' (with `has_frames=True`).
+            or 'TYXH' (with ``has_frames=True``).
             The dtype must be unsigned integer.
         global_resolution:
             Resolution of time tags in s, typically in ns range.
@@ -541,7 +561,7 @@ class PtuWriter:
         shape:
             Shape of TCSPC histogram image stack to write.
             The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
-            or 'TYXH' (with `has_frames=True`).
+            or 'TYXH' (with ``has_frames=True``).
         global_resolution:
             Resolution of time tags in s, typically in ns range.
             The inverse of the synctime or laser frequency.
@@ -576,7 +596,7 @@ class PtuWriter:
             Refer to the "PicoQuant Unified Tag Dictionary" for valid Id and
             values.
         mode:
-            Binary file open mode if `file` is file name.
+            Binary file open mode if ``file`` is file name.
             The default is 'w', which opens files for writing, truncating
             existing files.
             'x' opens files for exclusive creation, failing on existing files.
@@ -932,9 +952,19 @@ class BinaryFile:
         file:
             File name or seekable binary stream.
         mode:
-            File open mode if `file` is a file name.
-            If not specified, defaults to 'r'. Files are always opened
+            File open mode if ``file`` is a file name.
+            If not specified, defaults to ``'r'``. Files are always opened
             in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
+
+    Notes:
+        Memory mapping can improve random-access read performance on large
+        files or repeated reads of the same file regions by reducing syscall
+        overhead and data copying.
+        For sequential one-pass reads, regular buffered I/O may be faster.
 
     Raises:
         TypeError:
@@ -946,10 +976,13 @@ class BinaryFile:
     """
 
     _fh: IO[bytes]
+    _mm: mmap.mmap | None
+    _mv: memoryview | None  # view of _mm
     _path: str  # absolute path of file
     _name: str  # name of file or handle
     _close: bool  # file needs to be closed
     _closed: bool  # file is closed
+    _lock: contextlib.AbstractContextManager[Any]
     _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
 
     def __init__(
@@ -958,12 +991,16 @@ class BinaryFile:
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
     ) -> None:
 
+        self._mm = None
+        self._mv = None
         self._path = ''
         self._name = 'Unnamed'
         self._close = False
         self._closed = False
+        self._lock = contextlib.nullcontext()
 
         if isinstance(file, (str, os.PathLike)):
             ext = os.path.splitext(file)[-1].lower()
@@ -976,7 +1013,7 @@ class BinaryFile:
                 if mode[-1:] == 'b':
                     # accept 'rb'/'r+b'
                     mode = mode[:-1]  # type: ignore[assignment]
-                if mode not in ('r', 'r+'):
+                if mode not in {'r', 'r+'}:
                     msg = f'invalid {mode=!r}'
                     raise ValueError(msg)
             self._path = os.path.abspath(file)
@@ -1027,6 +1064,23 @@ class BinaryFile:
         else:
             self._name = type(file).__name__
 
+        if memmap:
+            _fh: Any = self._fh
+            if isinstance(_fh, mmap.mmap):
+                self._mm = _fh
+                self._mv = memoryview(self._mm)
+            else:
+                try:
+                    access = (
+                        mmap.ACCESS_WRITE
+                        if self._fh.writable()
+                        else mmap.ACCESS_READ
+                    )
+                    self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
+                    self._mv = memoryview(self._mm)
+                except OSError:
+                    pass
+
     @property
     def filehandle(self) -> IO[bytes]:
         """File handle."""
@@ -1034,17 +1088,17 @@ class BinaryFile:
 
     @property
     def filepath(self) -> str:
-        """Absolute path to file, or empty string if unavailable."""
+        """Absolute path to file, or empty string if no path is available."""
         return self._path
 
     @property
     def filename(self) -> str:
-        """Name of file, or empty if no path is available."""
+        """Basename of file path, or empty string if no path is available."""
         return os.path.basename(self._path)
 
     @property
     def dirname(self) -> str:
-        """Directory containing file, or empty if no path is available."""
+        """Directory containing file, or empty string if no path available."""
         return os.path.dirname(self._path)
 
     @property
@@ -1062,6 +1116,176 @@ class BinaryFile:
         return {'name': self.name, 'filepath': self.filepath}
 
     @property
+    def lock(self) -> contextlib.AbstractContextManager[Any]:
+        """Lock for thread-safe file access."""
+        return self._lock
+
+    def set_lock(self, enabled: bool, /) -> None:  # noqa: FBT001
+        """Enable or disable thread-safe file access.
+
+        Parameters:
+            enabled:
+                If true, use a threading.RLock, else a no-op lock.
+                Has no effect when memory-mapped I/O is active.
+
+        """
+        if self._mm is not None:
+            return
+        self._lock = threading.RLock() if enabled else contextlib.nullcontext()
+
+    def _write_at(
+        self, offset: int, data: bytes | bytearray | memoryview, /
+    ) -> None:
+        """Write bytes to file at given offset.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            data: Data to write.
+
+        """
+        if self._mm is not None and self.writable:
+            # writable mmap: direct slice write, no cursor movement
+            self._mm[offset : offset + len(data)] = data
+        else:
+            with self._lock:
+                self._fh.seek(offset)
+                self._fh.write(data)
+
+    def _read_at(self, offset: int, size: int, /) -> bytes | memoryview:
+        """Read bytes from file at given offset.
+
+        For memory-mapped files, returned bytes are exposed as a
+        ``memoryview`` of the mapping. Keeping that view alive may keep
+        the memory map (and associated file resources/lock) alive.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            size: Number of bytes to read.
+
+        """
+        mv = self._mv
+        if mv is not None:
+            return mv[offset : offset + size]
+        fh = self._fh
+        with self._lock:
+            fh.seek(offset)
+            return fh.read(size)
+
+    def _read_array(
+        self,
+        offset: int,
+        count: int,
+        dtype: DTypeLike,
+        *,
+        copy: bool = False,
+        writable: bool = False,
+        truncate: bool | None = False,
+    ) -> NDArray[Any]:
+        """Read numpy array from file at given offset.
+
+        For memory-mapped files, returned data are exposed directly as a
+        NumPy array view of the mapping (zero copy). Keeping that array alive
+        may keep the memory map (and associated file resources/lock) alive.
+
+        Parameters:
+            offset:
+                Byte offset from start of file.
+            count:
+                Number of elements to read. If ``-1``, read to end of file.
+            dtype:
+                Array element type.
+            copy:
+                If true, always return a detached copy in main memory.
+                For memory-mapped files, bypass the direct-view fast path.
+            writable:
+                By default, return read-only array from memory-mapped file.
+                Prevents accidental modification of underlying writable file.
+                Has no effect for non-memory-mapped files (always writeable).
+            truncate:
+                Allow partial reads of array.
+                If None, log error on partial read.
+
+        """
+        dtype = numpy.dtype(dtype)
+        itemsize = dtype.itemsize
+        if offset < 0:
+            msg = f'{offset=} < 0'
+            raise ValueError(msg)
+        if count < -1:
+            msg = f'{count=} < -1'
+            raise ValueError(msg)
+
+        mv = self._mv
+        if mv is not None:
+            if count == -1:
+                count = max(0, (len(mv) - offset) // itemsize)
+            nbytes = count * itemsize
+            size = min(nbytes, max(0, len(mv) - offset))
+            n = size - size % itemsize
+            array = numpy.frombuffer(
+                mv[offset : offset + n],
+                dtype,
+            )
+            if copy:
+                array = array.copy()
+            elif not writable and array.flags.writeable:
+                array.flags.writeable = False
+        elif count > -1:
+            fh = self._fh
+            nbytes = count * itemsize
+            array = numpy.empty(count, dtype)
+            with self._lock:
+                fh.seek(offset)
+                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+        else:
+            fh = self._fh
+            with self._lock:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                count = max(0, (size - offset) // itemsize)
+                nbytes = count * itemsize
+                array = numpy.empty(count, dtype)
+                fh.seek(offset)
+                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+
+        if n != nbytes:
+            array = array[: n // itemsize]
+            msg = f'expected {count} items, got {n // itemsize}'
+            if truncate is None:
+                logging.getLogger(__name__.split('.', 1)[0]).error(msg)
+            elif not truncate:
+                raise ValueError(msg)
+
+        return array
+
+    @cached_property
+    def filesize(self) -> int:
+        """Size of file in bytes."""
+        if self._mm is not None:
+            return len(self._mm)
+        fh = self._fh
+        try:
+            return os.fstat(fh.fileno()).st_size
+        except (AttributeError, io.UnsupportedOperation, OSError):
+            pass
+        with self._lock:
+            pos = fh.tell()
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(pos)
+        return size
+
+    @property
+    def writable(self) -> bool:
+        """File is open for writing."""
+        return self._fh.writable()
+
+    @property
+    def memmapped(self) -> bool:
+        """File is memory-mapped."""
+        return self._mm is not None
+
+    @property
     def closed(self) -> bool:
         """File is closed."""
         return self._closed
@@ -1069,6 +1293,10 @@ class BinaryFile:
     def close(self) -> None:
         """Close file."""
         self._closed = True  # always report file as closed
+        self._mv = None  # do not release(), threads may hold local refs
+        if self._mm is not None and self._mm is not self._fh:  # type: ignore[comparison-overlap]
+            with contextlib.suppress(Exception):
+                self._mm.close()
         if self._close:
             with contextlib.suppress(Exception):
                 self._fh.close()
@@ -1105,8 +1333,12 @@ class PqFile(BinaryFile):
         file:
             File name or seekable binary stream.
         mode:
-            File open mode if `file` is file name.
-            The default is 'r'. Files are always opened in binary mode.
+            File open mode if ``file`` is file name.
+            The default is ``'r'``. Files are always opened in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
         fastload:
             If true, only read tags marked for fast loading,
             else read all tags.
@@ -1137,32 +1369,38 @@ class PqFile(BinaryFile):
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
         fastload: bool = False,
     ) -> None:
-        super().__init__(file, mode=mode)
+        super().__init__(file, mode=mode, memmap=memmap)
 
         self.version = ''
         self.tags = {}
 
-        fh = self._fh
-        magic = fh.read(8)
         try:
-            self.type = PqFileType(magic)
-        except ValueError as exc:
+            self._init(fastload=fastload)
+        except Exception:
             self.close()
+            raise
+
+    def _init(self, *, fastload: bool) -> None:
+        header = bytes(self._read_at(0, 16))
+        offset = 16
+        try:
+            self.type = PqFileType(header[:8])
+        except ValueError as exc:
             msg = (
                 f'{self.filename!r} is not a {self.__class__.__name__} '
-                f'{magic=!r}'
+                f'{header[:8]!r}'
             )
             raise PqFileError(msg) from exc
         if self.type not in self._TYPE:
-            self.close()
             msg = (
                 f'{self.filename!r} type={self.type} is not in {self._TYPE!r}'
             )
             raise PqFileError(msg)
 
-        self.version = fh.read(8).strip(b'\0').decode()
+        self.version = header[8:].strip(b'\0').decode()
         tags = self.tags
 
         def errmsg(
@@ -1180,10 +1418,10 @@ class PqFile(BinaryFile):
         unpack = struct.unpack
         try:
             while True:
-                offset = fh.tell()
-                tagid_, index, typecode, value = unpack(
-                    '<32siI8s', fh.read(48)
+                tagid_, index, typecode, value = struct.unpack_from(
+                    '<32siI8s', self._read_at(offset, 48)
                 )
+                offset += 48
                 # print(tagid.strip(b'\0'), index, typecode, value)
                 tagid = tagid_.rstrip(b'\0').decode('ascii', errors='ignore')
 
@@ -1195,7 +1433,7 @@ class PqFile(BinaryFile):
                 }:
                     logger().error(
                         errmsg(
-                            f'tag {offset=} not divisible by 8',
+                            f'tag offset={offset - 48} not divisible by 8',
                             tagid,
                             index,
                             typecode,
@@ -1220,10 +1458,11 @@ class PqFile(BinaryFile):
                     case PqTagType.AnsiString:
                         size = unpack('<q', value)[0]
                         value = (
-                            fh.read(size)
+                            bytes(self._read_at(offset, size))
                             .rstrip(b'\0')
                             .decode('windows-1252', errors='ignore')
                         )
+                        offset += size
                     case PqTagType.Empty8:
                         value = None
                     case PqTagType.TDateTime:
@@ -1232,12 +1471,21 @@ class PqFile(BinaryFile):
                     # rarer typecodes
                     case PqTagType.WideString:
                         size = unpack('<q', value)[0]
-                        value = fh.read(size).decode('utf-16-le').rstrip('\0')
+                        value = (
+                            bytes(self._read_at(offset, size))
+                            .decode('utf-16-le')
+                            .rstrip('\0')
+                        )
+                        offset += size
                     case PqTagType.BinaryBlob:
                         size = unpack('<q', value)[0]
-                        value = fh.read(size)
                         if tagid == 'ChkHistogram':
-                            value = numpy.frombuffer(value, dtype=numpy.int64)
+                            value = self._read_array(
+                                offset, size // 8, numpy.int64, copy=True
+                            )
+                        else:
+                            value = bytes(self._read_at(offset, size))
+                        offset += size
                     case PqTagType.BitSet64:
                         value = unpack('<q', value)[0]
                     case PqTagType.Color8:
@@ -1245,7 +1493,10 @@ class PqFile(BinaryFile):
                         value = unpack('<q', value)[0]
                     case PqTagType.Float8Array:
                         size = unpack('<q', value)[0]
-                        value = unpack(f'<{size // 8}d', fh.read(size))
+                        value = unpack(
+                            f'<{size // 8}d', self._read_at(offset, size)
+                        )
+                        offset += size
                     case _:
                         logger().error(
                             errmsg(
@@ -1304,11 +1555,10 @@ class PqFile(BinaryFile):
                 else:
                     tags[tagid].append(value)
         except Exception as exc:
-            self.close()
             raise PqFileError(
                 errmsg('tag corrupted', tagid, index, typecode, value)
             ) from exc
-        self._data_offset = self._fh.tell()
+        self._data_offset = offset
 
     @property
     def guid(self) -> uuid.UUID:
@@ -1405,6 +1655,13 @@ class PhuFile(PqFile):
     Parameters:
         file:
             File name or seekable binary stream.
+        mode:
+            File open mode if ``file`` is file name.
+            The default is ``'r'``. Files are always opened in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
 
     Raises:
         PqFileError: File is not a PicoQuant PHU file or is corrupted.
@@ -1420,8 +1677,9 @@ class PhuFile(PqFile):
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
     ) -> None:
-        super().__init__(file, mode=mode)
+        super().__init__(file, mode=mode, memmap=memmap)
 
     @override
     def __enter__(self) -> Self:
@@ -1532,10 +1790,15 @@ class PhuFile(PqFile):
             self.tags['HistResDscr_HistogramBins'][index],
             strict=True,
         ):
-            self._fh.seek(offset)
-            histograms.append(
-                numpy.fromfile(self._fh, dtype='<u4', count=nbins)
+            hist = self._read_array(
+                offset,
+                nbins,
+                dtype=numpy.uint32,
+                copy=False,
+                writable=False,
+                truncate=None,
             )
+            histograms.append(hist)
         if asxarray:
             from xarray import DataArray
 
@@ -1608,6 +1871,13 @@ class PtuFile(PqFile):
     Parameters:
         file:
             File name or seekable binary stream.
+        mode:
+            File open mode if ``file`` is file name.
+            The default is ``'r'``. Files are always opened in binary mode.
+        memmap:
+            Map file into memory.
+            Ignored if memory mapping is not available or if the stream does
+            not support it.
         trimdims:
             Axes to trim. The default is ``'TCH'``:
 
@@ -1645,17 +1915,23 @@ class PtuFile(PqFile):
         /,
         *,
         mode: Literal['r', 'r+'] | None = None,
+        memmap: bool = False,
         trimdims: Sequence[Dimension] | str | None = None,
     ) -> None:
         self._records = None
-        super().__init__(file, mode=mode)
-        if trimdims is None:
-            self._trimdims = {'T', 'C', 'H'}
-        else:
-            self._trimdims = {ax.upper() for ax in trimdims}
-        self._dtype = numpy.dtype(numpy.uint16)
-        self._asxarray = False
-        self._cache = True
+        super().__init__(file, mode=mode, memmap=memmap)
+
+        try:
+            if trimdims is None:
+                self._trimdims = {'T', 'C', 'H'}
+            else:
+                self._trimdims = {ax.upper() for ax in trimdims}
+            self._dtype = numpy.dtype(numpy.uint16)
+            self._asxarray = False
+            self._cache = not memmap  # memmap takes care of caching
+        except Exception:
+            self.close()
+            raise
 
     @override
     def __enter__(self) -> Self:
@@ -1762,7 +2038,7 @@ class PtuFile(PqFile):
         # NOTE: this does not catch invalid TTResult_NumberOfRecords > 0
         count = value = int(self.tags.get('TTResult_NumberOfRecords', 0))
         if count <= 0:
-            count = (self._fh.seek(0, os.SEEK_END) - self._data_offset) // 4
+            count = (self.filesize - self._data_offset) // 4
             if count != 0:
                 logger().warning(
                     f'{self!r} invalid TTResult_NumberOfRecords={value}. '
@@ -2244,7 +2520,7 @@ class PtuFile(PqFile):
 
         return PtuInfo(
             *decode_info(
-                self.read_records(),
+                self.read_records(copy=False),
                 self.tags['TTResultFormat_TTTRRecType'],
                 self.line_start_mask,
                 self.line_stop_mask,
@@ -2253,53 +2529,42 @@ class PtuFile(PqFile):
             )
         )
 
-    def read_records(
-        self,
-        *,
-        memmap: bool | Literal['r', 'r+', 'c'] = False,
-    ) -> NDArray[numpy.uint32]:
+    def read_records(self, *, copy: bool = True) -> NDArray[numpy.uint32]:
         """Return encoded TTTR records from file.
 
-        Records are cached depending on the :py:attr:`PtuFile.cache_records`
-        property.
+        If copy is false for a memory-mapped file, records are exposed
+        directly as a NumPy array view of the mapping. Keeping that array
+        alive may keep the memory map (and associated file resources/lock)
+        alive.
+
+        Records are cached according to :py:attr:`PtuFile.cache_records`:
+        disabled by default for memory-mapped files, enabled otherwise.
 
         Parameters:
-            memmap:
-                Memory-map records in file using specified mode.
-                If false (default), read records from file into main memory.
+            copy:
+                If true, always return a detached copy in main memory.
+                This avoids cache corruption and returning arrays that
+                reference memory-mapped resources.
 
         """
         if self._cache and self._records is not None:
+            if copy:
+                return self._records.copy()
             return self._records
         if self.tags['TTResultFormat_BitsPerRecord'] not in {0, 32}:
             msg = f"invalid {self.tags['TTResultFormat_BitsPerRecord']=}"
             raise ValueError(msg)
-        count = self.number_records
-        records: NDArray[numpy.uint32]
-        if memmap:
-            if memmap is True:
-                memmap = 'r'
-            elif memmap not in {'r', 'r+', 'c'}:
-                msg = f'invalid memmap mode={memmap=!r}'
-                raise ValueError(msg)
-            records = numpy.memmap(
-                self._fh,
-                dtype=numpy.uint32,
-                mode=memmap,
-                offset=self._data_offset,
-                shape=(count,),
-            )
-        else:
-            records = numpy.empty(count, numpy.uint32)
-            self._fh.seek(self._data_offset)
-            n = self._fh.readinto(records)  # type: ignore[attr-defined]
-            if n != count * 4:
-                logger().error(
-                    f'{self!r} expected {count} records, got {n // 4}'
-                )
-                records = records[: n // 4]
+        records = self._read_array(
+            self._data_offset,
+            self.number_records,
+            numpy.uint32,
+            copy=copy,
+            truncate=None,  # log errors on partial reads
+        )
         if self._cache:
             self._records = records
+            if copy:
+                return records.copy()
         return records
 
     def decode_records(
@@ -2336,7 +2601,7 @@ class PtuFile(PqFile):
         from ._ptufile import decode_t2_records, decode_t3_records
 
         if records is None:
-            records = self.read_records()
+            records = self.read_records(copy=False)
         rectype = self.tags['TTResultFormat_TTTRRecType']
         if self.is_t3:
             result = create_output(
@@ -2411,7 +2676,7 @@ class PtuFile(PqFile):
                 Increase the bit depth to avoid overflows.
             sampling_time:
                 Global time per sample for T2 mode.
-                The default is :py:meth:`PtuFile.global_pixel_time`.
+                The default is :py:attr:`PtuFile.global_pixel_time`.
             dtime:
                 Number of bins in histogram.
                 If 0, return :py:attr:`number_bins_in_period` bins.
@@ -2447,7 +2712,7 @@ class PtuFile(PqFile):
             raise ValueError(msg)
 
         if records is None:
-            records = self.read_records()
+            records = self.read_records(copy=False)
         rectype = self.tags['TTResultFormat_TTTRRecType']
 
         if 'C' in self._trimdims:
@@ -2819,13 +3084,13 @@ class PtuFile(PqFile):
         from ._ptufile import decode_t3_image, decode_t3_line, decode_t3_point
 
         if records is None:
-            records = self.read_records()
+            records = self.read_records(copy=False)
 
         if ndim == 5:
             if (
                 self.line_start_mask == 0  # noqa: PLR1714
                 or self.line_stop_mask == 0
-                or self.frame_change_mask == 0
+                or (self.frame_change_mask == 0 and shape[0] > 1)
                 or self.line_stop_mask == self.line_start_mask
                 or self.frame_change_mask == self.line_start_mask
                 or self.frame_change_mask == self.line_stop_mask
@@ -3552,8 +3817,8 @@ def sinusoidal_correction(
         sincorrect:
             Amount of sine wave used for measurement.
             Either percentage of amplitude (PicoQuant) or period (Leica)
-            depending on `is_amplitude`.
-            The value of the `ImgHdr_SinCorrection` tag.
+            depending on ``is_amplitude``.
+            The value of the ``ImgHdr_SinCorrection`` tag.
         global_line_time:
             Global time per line.
         pixels_in_line:
@@ -3563,7 +3828,7 @@ def sinusoidal_correction(
             If false, correction value is percentage of period of sine wave.
 
     Returns:
-        Array of size `global_line_time`, mapping global time in line to
+        Array of size ``global_line_time``, mapping global time in line to
         pixel index in line.
 
     """
@@ -3601,39 +3866,40 @@ def create_output(
 
     Parameters:
         out:
-            Specifies kind of array of `shape` and `dtype` to return:
+            Specifies kind of array of ``shape`` and ``dtype`` to return:
 
-                `None`:
+                ``None``:
                     Return new array.
-                `numpy.ndarray`:
+                ``numpy.ndarray``:
                     Return view of existing array.
-                `'memmap'` or `'memmap:tempdir'`:
+                ``'memmap'`` or ``'memmap:tempdir'``:
                     Return memory-map to array stored in temporary binary file.
-                `str` or open file:
+                ``str`` or open file:
                     Return memory-map to array stored in specified binary file.
         shape:
             Shape of array to return.
         dtype:
             Data type of array to return.
-            If `out` is an existing array, `dtype` must be castable to its
+            If ``out`` is an existing array, ``dtype`` must be castable to its
             data type.
         mode:
             File mode to create memory-mapped array.
             The default is 'w+' to create new, or overwrite existing file for
             reading and writing.
         suffix:
-            Suffix of `NamedTemporaryFile` if `out` is `'memmap'`.
+            Suffix of ``NamedTemporaryFile`` if ``out`` is ``'memmap'``.
             The default is '.memmap'.
         fillvalue:
             Value to initialize output array.
             By default, return uninitialized array.
 
     Returns:
-        NumPy array or memory-mapped array of `shape` and `dtype`.
+        NumPy array or memory-mapped array of ``shape`` and ``dtype``.
 
     Raises:
         ValueError:
-            Existing array cannot be reshaped to `shape` or cast to `dtype`.
+            Existing array cannot be reshaped to ``shape``
+            or cast to ``dtype``.
 
     """
     shape = tuple(shape)
@@ -3651,7 +3917,8 @@ def create_output(
         if not numpy.can_cast(dtype, out.dtype):
             msg = f'cannot cast {dtype} to {out.dtype}'
             raise ValueError(msg)
-        out = out.reshape(shape)
+        if out.shape != shape:
+            out = out.reshape(shape, copy=False)
         if fillvalue is not None:
             out.fill(fillvalue)
         return out
@@ -3770,10 +4037,10 @@ def main(argv: list[str] | None = None) -> int:
             with PqFile(filename) as pq:
                 if pq.type == PqFileType.PTU:
                     t = Timer()
-                    with PtuFile(filename) as ptu:
+                    with PtuFile(filename, memmap=True) as ptu:
                         t.print('   open file')
                         t.start()
-                        ptu.read_records()
+                        ptu.read_records(copy=False)
                         t.print('read records')
                         t.start()
                         ptu_info = ptu._info
@@ -3789,7 +4056,7 @@ def main(argv: list[str] | None = None) -> int:
                         except NotImplementedError as exc:
                             print('NotImplementedError:', exc)
                 elif pq.type == PqFileType.PHU:
-                    with PhuFile(filename) as phu:
+                    with PhuFile(filename, memmap=True) as phu:
                         print(phu)
                         phu.plot(verbose=True)
                 else:
