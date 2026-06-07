@@ -31,15 +31,17 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2026.3.21
+:Version: 2026.6.6
 
 """
 
+import contextlib
 import datetime
 import glob
 import io
 import itertools
 import logging
+import mmap
 import os
 import pathlib
 import sys
@@ -258,7 +260,7 @@ class TestBinaryFile:
                 pass
 
         with pytest.raises(ValueError):
-            BinaryFile(File)
+            BinaryFile(File())
 
     def test_openfile_not_seekable(self):
         """Test BinaryFile with non-seekable file fails."""
@@ -271,7 +273,7 @@ class TestBinaryFile:
                 return File()
 
         with pytest.raises(ValueError):
-            BinaryFile(File)
+            BinaryFile(File())
 
     def test_invalid_object(self):
         """Test BinaryFile with invalid file object fails."""
@@ -281,12 +283,190 @@ class TestBinaryFile:
             pass
 
         with pytest.raises(TypeError):
-            BinaryFile(File)
+            BinaryFile(File())
 
     def test_invalid_mode(self):
         """Test BinaryFile with invalid mode fails."""
         with pytest.raises(ValueError):
             BinaryFile(self.filename, mode='ab')
+
+    def test_memmap_disabled(self):
+        """Test memmap=False (default) does not memory-map file."""
+        with BinaryFile(self.filename) as fh:
+            assert fh._mm is None
+        with BinaryFile(self.filename, memmap=False) as fh:
+            assert fh._mm is None
+
+    def test_memmap_bytesio_ignored(self):
+        """Test memmap=True is silently ignored for BytesIO."""
+        with open(self.filename, 'rb') as f:
+            data = f.read()
+        with BinaryFile(io.BytesIO(data), memmap=True) as fh:
+            assert fh._mm is None
+            assert bytes(fh._read_at(0, 4)) == b'\x00\x01\x02\x03'
+
+    @pytest.mark.parametrize('memmap', [False, True])
+    def test_read_at(self, memmap):
+        """Test _read_at returns bytes or memoryview at offset."""
+        with BinaryFile(self.filename, memmap=memmap) as fh:
+            data = fh._read_at(0, 4)
+            assert isinstance(data, memoryview if memmap else bytes)
+            assert bytes(data) == b'\x00\x01\x02\x03'
+            data = fh._read_at(10, 3)
+            assert bytes(data) == b'\x0a\x0b\x0c'
+
+    @pytest.mark.parametrize('memmap', [False, True])
+    def test_read_array(self, memmap):
+        """Test _read_array returns array at offset; dtype, count=-1, copy."""
+        dtype = numpy.dtype('uint8')
+        with BinaryFile(self.filename, memmap=memmap) as fh:
+            arr = fh._read_array(0, 4, dtype)
+            assert arr.dtype == dtype
+            assert numpy.array_equal(arr, [0, 1, 2, 3])
+            arr = fh._read_array(10, 3, dtype)
+            assert numpy.array_equal(arr, [10, 11, 12])
+            if memmap:
+                assert not arr.flags.writeable
+                arr_copy = fh._read_array(0, 4, dtype, copy=True)
+                assert arr_copy.flags.writeable
+                arr_copy[0] = 99  # must not raise
+            else:
+                # multi-byte dtype: binary.bin bytes as uint16 LE pairs
+                arr16 = fh._read_array(0, 4, numpy.dtype('<u2'))
+                assert numpy.array_equal(
+                    arr16, [0x0100, 0x0302, 0x0504, 0x0706]
+                )
+            # count=-1 reads to end of file
+            arr_end = fh._read_array(252, -1, dtype)
+            assert numpy.array_equal(arr_end, [252, 253, 254, 255])
+
+    def test_read_array_writable_memmap(self, tmp_path):
+        """Test  writable=False makes mmap RO; writable=True keeps it RW."""
+        tmpfile = tmp_path / 'test.bin'
+        with open(self.filename, 'rb') as src:
+            tmpfile.write_bytes(src.read())
+        dtype = numpy.dtype('uint8')
+        with BinaryFile(tmpfile, mode='r+', memmap=True) as fh:
+            arr_ro = fh._read_array(0, 4, dtype)
+            assert not arr_ro.flags.writeable
+            arr_rw = fh._read_array(0, 4, dtype, writable=True)
+            assert arr_rw.flags.writeable
+
+    def test_read_array_truncate(self, caplog):
+        """Test truncate=False raises; True returns partial; None logs."""
+        import logging
+
+        with (
+            BinaryFile(io.BytesIO(bytes(range(5)))) as fh,
+            pytest.raises(ValueError, match='expected 10 items, got 5'),
+        ):
+            fh._read_array(0, 10, numpy.uint8, truncate=False)
+        with BinaryFile(io.BytesIO(bytes(range(5)))) as fh:
+            arr = fh._read_array(0, 10, numpy.uint8, truncate=True)
+            assert len(arr) == 5
+            assert numpy.array_equal(arr, [0, 1, 2, 3, 4])
+        logger = BinaryFile.__module__.split('.')[0]
+        with (
+            BinaryFile(io.BytesIO(bytes(range(5)))) as fh,
+            caplog.at_level(logging.ERROR, logger=logger),
+        ):
+            arr = fh._read_array(0, 10, numpy.uint8, truncate=None)
+        assert len(arr) == 5
+        assert 'expected 10 items, got 5' in caplog.text
+
+    def test_read_array_mmap_alignment(self, tmp_path):
+        """Test mmap path truncates partial element to full boundary."""
+        # 7 bytes; requesting 4 uint16 (8 bytes); 3 complete elements fit
+        tmpfile = tmp_path / 'align.bin'
+        tmpfile.write_bytes(b'\x01\x00\x02\x00\x03\x00\xff')
+        dtype = numpy.dtype('<u2')
+        with BinaryFile(tmpfile, memmap=True) as fh:
+            arr = fh._read_array(0, 4, dtype, truncate=True)
+            assert len(arr) == 3
+            assert numpy.array_equal(arr, [1, 2, 3])
+            # truncate=False must raise even on mmap path
+            with pytest.raises(ValueError, match='expected 4 items, got 3'):
+                fh._read_array(0, 4, dtype, truncate=False)
+
+    def test_read_array_invalid_offset(self):
+        """Test _read_array raises ValueError for negative offset."""
+        with BinaryFile(io.BytesIO(bytes(range(8)))) as fh:  # noqa: SIM117
+            with pytest.raises(ValueError, match='offset'):
+                fh._read_array(-1, 4, numpy.uint8)
+
+    def test_read_array_invalid_count(self):
+        """Test _read_array raises ValueError for count < -1."""
+        with BinaryFile(io.BytesIO(bytes(range(8)))) as fh:  # noqa: SIM117
+            with pytest.raises(ValueError, match='count'):
+                fh._read_array(0, -2, numpy.uint8)
+
+    def test_write_at(self):
+        """Test _write_at writes bytes to file at given offset."""
+        with open(self.filename, 'rb') as fh:
+            data = fh.read()
+        file = io.BytesIO(data)
+        with BinaryFile(file, mode='r+') as fh:
+            fh._write_at(5, b'\xaa\xbb\xcc')
+            assert bytes(fh._read_at(4, 5)) == b'\x04\xaa\xbb\xcc\x08'
+        # verify persistence after close
+        assert file.getvalue()[5:8] == b'\xaa\xbb\xcc'
+
+    def test_write_at_memmap(self, tmp_path):
+        """Test _write_at writes via mmap; mode='r+' creates writable mmap."""
+        tmpfile = tmp_path / 'test.bin'
+        tmpfile.write_bytes(pathlib.Path(self.filename).read_bytes())
+        with BinaryFile(tmpfile, mode='r+', memmap=True) as fh:
+            assert fh._mm is not None
+            assert fh.writable
+            assert bytes(fh._read_at(0, 4)) == b'\x00\x01\x02\x03'
+            fh._write_at(5, b'\xaa\xbb\xcc')
+        with BinaryFile(tmpfile) as fh:
+            assert bytes(fh._read_at(5, 3)) == b'\xaa\xbb\xcc'
+
+    def test_memmapped(self):
+        """Test memmapped property reflects memory-map state."""
+        with BinaryFile(self.filename) as fh:
+            assert not fh.memmapped
+        with BinaryFile(self.filename, memmap=True) as fh:
+            assert fh.memmapped
+
+    def test_writable(self, tmp_path):
+        """Test writable property reflects file open mode."""
+        tmpfile = tmp_path / 'test.bin'
+        tmpfile.write_bytes(b'\x00' * 4)
+        with BinaryFile(tmpfile) as fh:
+            assert not fh.writable
+        with BinaryFile(tmpfile, mode='r+') as fh:
+            assert fh.writable
+
+    def test_name_setter(self):
+        """Test name setter updates display name and attrs."""
+        with BinaryFile(self.filename) as fh:
+            fh.name = 'custom'
+            assert fh.name == 'custom'
+            assert fh.attrs['name'] == 'custom'
+
+    def test_set_lock(self):
+        """Test set_lock enables and disables RLock; no-op when mmap active."""
+        import threading
+
+        with BinaryFile(self.filename) as fh:
+            assert isinstance(fh._lock, contextlib.nullcontext)
+            fh.set_lock(True)
+            assert isinstance(fh._lock, type(threading.RLock()))
+            fh.set_lock(False)
+            assert isinstance(fh._lock, contextlib.nullcontext)
+        with BinaryFile(self.filename, memmap=True) as fh:
+            lock_before = fh._lock
+            fh.set_lock(True)
+            assert fh._lock is lock_before
+
+    def test_repr(self):
+        """Test __repr__ includes class name and file name."""
+        with BinaryFile(self.filename) as fh:
+            r = repr(fh)
+            assert r.startswith('<BinaryFile ')
+            assert 'binary.bin' in r
 
 
 @pytest.mark.parametrize('memmap', [False, True])
@@ -484,17 +664,18 @@ def test_spqr():
         assert attrs['tags'] == pq.tags
 
 
-@pytest.mark.parametrize('filetype', [str, io.BytesIO])
+@pytest.mark.parametrize('filetype', [str, io.BytesIO, mmap])
 def test_ptu(filetype):
     """Test read PTU file."""
     filename = (
         DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     )
-    if filetype is not str:
+    if filetype is io.BytesIO:
         filename = open(filename, 'rb')
     try:
-        with PtuFile(filename) as ptu:
+        with PtuFile(filename, memmap=filetype is mmap) as ptu:
             str(ptu)
+            assert ptu.memmapped == (filetype is mmap)
             assert ptu.type == PqFileType.PTU
             assert ptu.record_type == PtuRecordType.PicoHarpT3
             assert ptu.measurement_mode == PtuMeasurementMode.T3
@@ -548,18 +729,18 @@ def test_ptu(filetype):
 
             # decoding of records is tested separately
     finally:
-        if filetype is not str:
+        if filetype is io.BytesIO:
             filename.close()
 
 
-@pytest.mark.parametrize('filetype', [str, io.BytesIO])
+@pytest.mark.parametrize('filetype', [str, io.BytesIO, mmap])
 def test_phu(filetype):
     """Test read PHU file."""
     filename = DATA / 'TimeHarp/Decay_Coumarin_6.phu'
-    if filetype is not str:
+    if filetype is io.BytesIO:
         filename = open(filename, 'rb')
     try:
-        with PhuFile(filename) as phu:
+        with PhuFile(filename, memmap=filetype is mmap) as phu:
             str(phu)
             assert phu.type == PqFileType.PHU
             assert phu.measurement_mode == PhuMeasurementMode.HISTOGRAM
@@ -594,7 +775,7 @@ def test_phu(filetype):
                 phu.plot(show=False, verbose=False)
                 phu.plot(show=False, verbose=True)
     finally:
-        if filetype is not str:
+        if filetype is io.BytesIO:
             filename.close()
 
 
@@ -1193,17 +1374,34 @@ def test_ptu_plot(filename, verbose):
         ptu.plot(show=False, verbose=verbose)
 
 
-def test_ptu_read_records():
+@pytest.mark.parametrize('copy', [False, True])
+@pytest.mark.parametrize('memmap', [False, True])
+def test_ptu_read_records(copy, memmap):
     """Test PTU read_records method."""
     # the file is tested in test_issue_skip_frame
     filename = DATA / 'Samples.sptw/GUVs.ptu'
-    with PtuFile(filename, mode='r+') as ptu:
-        # use cached memory map of records
-        records = ptu.read_records(memmap='r+')
-        assert ptu.cache_records
-        assert isinstance(records, numpy.memmap), type(records)
+    with PtuFile(filename, memmap=memmap) as ptu:
+        # explicit copy mode
+        records = ptu.read_records(copy=copy)
+        assert ptu.cache_records == (not memmap)
+        assert isinstance(records, numpy.ndarray), type(records)
         assert records.size == ptu.number_records
-        assert records is ptu.read_records()  # retrieve from cache
+
+        if ptu.cache_records:
+            assert ptu._records is not None
+            if copy:
+                assert records is not ptu._records
+                assert not numpy.shares_memory(records, ptu._records)
+                assert ptu.read_records(copy=copy) is not records
+            else:
+                assert records is ptu._records
+                assert records is ptu.read_records(copy=copy)
+
+            # default copy=True always returns detached arrays
+            records_default = ptu.read_records()
+            assert records_default is not ptu._records
+            assert not numpy.shares_memory(records_default, ptu._records)
+
         im0 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
         del records
 
@@ -1211,22 +1409,16 @@ def test_ptu_read_records():
         ptu.cache_records = False
         assert not ptu.cache_records
         assert ptu._records is None
-        records = ptu.read_records()
+        records = ptu.read_records(copy=copy)
         assert ptu._records is None
         assert isinstance(records, numpy.ndarray), type(records)
-        assert ptu.read_records() is not records  # not from cache
+        assert ptu.read_records(copy=copy) is not records  # not from cache
+
+        # default copy=True with no caching
+        assert ptu.read_records() is not records
+
         im1 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
         assert_array_equal(im0, im1)
-
-        # memory map without caching
-        records = ptu.read_records(memmap=True)
-        assert isinstance(records, numpy.memmap), type(records)
-        im1 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
-        assert_array_equal(im0, im1)
-        del records
-
-        with pytest.raises(ValueError):
-            ptu.read_records(memmap='abc')
 
 
 @pytest.mark.parametrize('output', ['ndarray', 'memmap', 'filename'])
@@ -1751,14 +1943,15 @@ def test_issue_number_records_negative(caplog):
         assert len(ptu.read_records()) == 3167584182
 
 
-def test_issue_record_number(caplog):
+@pytest.mark.parametrize('memmap', [False, True])
+def test_issue_record_number(memmap, caplog):
     """Test PTU with too few records."""
     filename = DATA / 'Samples.sptw/Cy5_immo_FLIM+Pol-Imaging.ptu'
-    with PtuFile(filename) as ptu:
+    with PtuFile(filename, memmap=memmap) as ptu:
         assert ptu.version == '00.0.0'
         with caplog.at_level(logging.ERROR):
             records = ptu.read_records()
-            assert 'expected 3409856 records, got 3364091' in caplog.text
+            assert 'expected 3409856 items, got 3364091' in caplog.text
             assert len(records) == 3364091
         decoded = ptu.decode_records()
         assert decoded.size == 3364091
@@ -2377,11 +2570,11 @@ def test_glob(filename):
     filename = str(DATA / filename)
     if 'htmlcov' in filename or 'url' in filename or 'defective' in filename:
         pytest.skip()
-    with PqFile(filename) as pq:
+    with PqFile(filename, memmap=True) as pq:
         str(pq)
         is_ptu = pq.type == PqFileType.PTU
     if is_ptu:
-        with PtuFile(filename) as ptu:
+        with PtuFile(filename, memmap=True) as ptu:
             str(ptu)
 
 
