@@ -1552,8 +1552,8 @@ def encode_t3_image(
     cdef:
         ssize_t sizet, sizey, sizex, sizec, sizeh
         ssize_t t, y, x, c, h, nrecords, maxrecords
-        uint_t count
-        uint32_t time, time_in_pixel, overflow, maxtime, maxoverflow, i
+        uint32_t time, time_in_pixel, overflow, maxtime, maxoverflow, _i
+        uint_t _count
         encode_func_t encode
 
     sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
@@ -1599,7 +1599,7 @@ def encode_t3_image(
                         # channel
                         for h in range(sizeh):
                             # bin
-                            for count in range(histogram[t, y, x, c, h]):
+                            for _count in range(histogram[t, y, x, c, h]):
                                 # photon
                                 if nrecords >= maxrecords:
                                     nrecords = -1
@@ -1638,7 +1638,7 @@ def encode_t3_image(
                     # move to next pixel
                     # TODO: calculate overflows
                     overflow = 0
-                    for i in range(pixel_time - time_in_pixel):
+                    for _i in range(pixel_time - time_in_pixel):
                         time += 1
                         if time == maxtime:
                             # overflow
