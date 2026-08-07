@@ -9,27 +9,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-        python-version: ["3.14"]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
     steps:
-      - uses: actions/checkout@v6
-      - uses: pypa/cibuildwheel@v3.4.1
+      - uses: actions/checkout@v7
+      - uses: pypa/cibuildwheel@v4.2.0
         env:
           # MACOSX_DEPLOYMENT_TARGET: "11.0"
           # CIBW_ENVIRONMENT: "PIP_PRE=1"
           CIBW_BUILD_VERBOSITY: 2
-          # build ABI3 wheels with Python 3.12, and free-threaded wheels with Python 3.14t
-          CIBW_BUILD: "cp312-* cp314t-*"
+          # build ABI3 wheels with Python 3.12, and free-threaded wheels for Python >=3.14t
+          CIBW_BUILD: "cp312-* cp314t-* cp315t-*"
           CIBW_SKIP: "*musllinux* *i686 *ppc64le *s390x"
           CIBW_ARCHS_LINUX: auto
           CIBW_ARCHS_MACOS: x86_64 arm64
-          CIBW_ARCHS_WINDOWS: AMD64 ARM64 x86
+          CIBW_ARCHS_WINDOWS: native
           CIBW_TEST_REQUIRES: numpy
           CIBW_TEST_COMMAND: python -c "import ptufile;from ptufile import _ptufile;print(ptufile.__version__)"
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.14
       - name: Install packages
         run: |
           python -m pip install -U --find-links=wheelhouse ptufile abi3audit
@@ -44,3 +42,20 @@ jobs:
         with:
           path: ./wheelhouse/*.whl
           name: wheels-${{ matrix.os }}
+
+  build_pyodide:
+    name: Build Pyodide wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install cibuildwheel
+        run: python -m pip install cibuildwheel
+      - name: Build wheel
+        run: python -m cibuildwheel --platform pyodide
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ./wheelhouse/*.whl
+          name: wheels-pyodide
