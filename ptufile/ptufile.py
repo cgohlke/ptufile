@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.6
+:Version: 2026.8.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -64,18 +64,22 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.4.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.9 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.6.1 (optional)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.15, 3.14.7, 3.15.0rc 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.7.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.7.31 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.5 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.9 (build)
 
 Revisions
 ---------
+
+2026.8.8
+
+- Add PQOVER file type.
 
 2026.6.6
 
@@ -181,12 +185,17 @@ Other modules for reading or writing PicoQuant files are
 `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_),
 `PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`_,
 `FLOPA <https://github.com/IMCF-Biocev/FLOPA/tree/main/src/flopa/io/ptuio>`_,
+`FLIMKit <https://github.com/alex1075/flim-native-decoders/tree/main/flim_native_decoders/ptu>`_,
 and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
 Examples
 --------
+
+Import functions and classes used in these examples:
+
+>>> from ptufile import PqFile, PtuFile, imwrite, imread
 
 Read properties and tags from any type of PicoQuant unified tagged file:
 
@@ -300,7 +309,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.6.6'
+__version__ = '2026.8.8'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -937,6 +946,9 @@ class PqFileType(enum.Enum):
     PQUNI = b'PQUNI\0\0\0'
     """UniHarp file, PQUNI, contains memory and measured data."""
 
+    PQOVER = b'PQOVER\0\0'
+    """Unknown file, PQOVER, contains undocumented data."""
+
     SPQR = b'PQSPQR\0\0'
     """Unknown file, SPQR, contains undocumented data."""
 
@@ -982,6 +994,7 @@ class BinaryFile:
     _name: str  # name of file or handle
     _close: bool  # file needs to be closed
     _closed: bool  # file is closed
+    _memmap: bool  # open companion files using memmap
     _lock: contextlib.AbstractContextManager[Any]
     _ext: ClassVar[set[str]] = set()  # valid extensions, empty for any
 
@@ -1000,6 +1013,7 @@ class BinaryFile:
         self._name = 'Unnamed'
         self._close = False
         self._closed = False
+        self._memmap = bool(memmap)
         self._lock = contextlib.nullcontext()
 
         if isinstance(file, (str, os.PathLike)):
@@ -1171,6 +1185,34 @@ class BinaryFile:
             fh.seek(offset)
             return fh.read(size)
 
+    def _read_into(self, offset: int, buffer: NDArray[numpy.uint8], /) -> int:
+        """Read bytes from file at given offset into existing buffer.
+
+        Parameters:
+            offset: Byte offset from start of file.
+            buffer: Flat, writable uint8 numpy array to read into.
+
+        Returns:
+            Number of bytes read.
+
+        """
+        nbytes = len(buffer)
+        mv = self._mv
+        if mv is not None:
+            n = min(nbytes, max(0, len(mv) - offset))
+            buffer[:n] = numpy.frombuffer(mv[offset : offset + n], numpy.uint8)
+            return n
+
+        fh = self._fh
+        with self._lock:
+            fh.seek(offset)
+            try:
+                return fh.readinto(buffer)  # type: ignore[attr-defined, no-any-return]
+            except (AttributeError, OSError):
+                data = fh.read(nbytes)
+                buffer[:] = numpy.frombuffer(data, numpy.uint8)
+                return len(data)
+
     def _read_array(
         self,
         offset: int,
@@ -1200,7 +1242,7 @@ class BinaryFile:
             writable:
                 By default, return read-only array from memory-mapped file.
                 Prevents accidental modification of underlying writable file.
-                Has no effect for non-memory-mapped files (always writeable).
+                Has no effect for non-memory-mapped files (always writable).
             truncate:
                 Allow partial reads of array.
                 If None, log error on partial read.
@@ -3650,6 +3692,7 @@ FILE_EXTENSIONS = {
     '.pqres': PqFileType.PQRES,
     '.pqdat': PqFileType.PQDAT,
     '.pquni': PqFileType.PQUNI,
+    '.pqover': PqFileType.PQOVER,
     '.spqr': PqFileType.SPQR,
 }
 """File extensions of PicoQuant tagged files."""
