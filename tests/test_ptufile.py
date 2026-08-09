@@ -31,7 +31,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2026.6.6
+:Version: 2026.8.8
 
 """
 
@@ -180,6 +180,7 @@ class TestBinaryFile:
         assert fh.dirname == dirname
         assert fh.name == name
         assert fh.closed is False
+        assert fh.filesize == 256
         assert len(fh.filehandle.read()) == 256
         fh.filehandle.seek(10)
         assert fh.filehandle.tell() == 10
@@ -305,6 +306,28 @@ class TestBinaryFile:
             assert fh._mm is None
             assert bytes(fh._read_at(0, 4)) == b'\x00\x01\x02\x03'
 
+    def test_memmap_mmap_object(self):
+        """Test BinaryFile accepts an existing mmap.mmap as file handle."""
+        import mmap as mmap_module
+
+        with open(self.filename, 'rb') as f:
+            mm = mmap_module.mmap(
+                f.fileno(), 0, access=mmap_module.ACCESS_READ
+            )
+        arr = None
+        try:
+            with BinaryFile(mm, memmap=True) as fh:
+                assert fh._mm is mm
+                assert fh._mv is not None
+                assert fh.memmapped
+                assert fh.filesize == 256
+                assert bytes(fh._read_at(0, 4)) == b'\x00\x01\x02\x03'
+                arr = fh._read_array(10, 3, numpy.uint8)
+                assert numpy.array_equal(arr, [10, 11, 12])
+        finally:
+            del arr  # release mmap-backed array before closing mmap
+            mm.close()
+
     @pytest.mark.parametrize('memmap', [False, True])
     def test_read_at(self, memmap):
         """Test _read_at returns bytes or memoryview at offset."""
@@ -314,6 +337,26 @@ class TestBinaryFile:
             assert bytes(data) == b'\x00\x01\x02\x03'
             data = fh._read_at(10, 3)
             assert bytes(data) == b'\x0a\x0b\x0c'
+
+    @pytest.mark.parametrize('memmap', [False, True])
+    def test_read_into(self, memmap):
+        """Test _read_into reads bytes at offset into existing uint8 buffer."""
+        with BinaryFile(self.filename, memmap=memmap) as fh:
+            buf = numpy.empty(4, numpy.uint8)
+            n = fh._read_into(0, buf)
+            assert n == 4
+            assert numpy.array_equal(buf, [0, 1, 2, 3])
+
+            buf = numpy.empty(3, numpy.uint8)
+            n = fh._read_into(10, buf)
+            assert n == 3
+            assert numpy.array_equal(buf, [10, 11, 12])
+
+            # read past end of file returns only available bytes
+            buf = numpy.empty(8, numpy.uint8)
+            n = fh._read_into(252, buf)
+            assert n == 4
+            assert numpy.array_equal(buf[:4], [252, 253, 254, 255])
 
     @pytest.mark.parametrize('memmap', [False, True])
     def test_read_array(self, memmap):
@@ -451,15 +494,15 @@ class TestBinaryFile:
         import threading
 
         with BinaryFile(self.filename) as fh:
-            assert isinstance(fh._lock, contextlib.nullcontext)
+            assert isinstance(fh.lock, contextlib.nullcontext)
             fh.set_lock(True)
-            assert isinstance(fh._lock, type(threading.RLock()))
+            assert isinstance(fh.lock, type(threading.RLock()))
             fh.set_lock(False)
-            assert isinstance(fh._lock, contextlib.nullcontext)
+            assert isinstance(fh.lock, contextlib.nullcontext)
         with BinaryFile(self.filename, memmap=True) as fh:
-            lock_before = fh._lock
+            lock_before = fh.lock
             fh.set_lock(True)
-            assert fh._lock is lock_before
+            assert fh.lock is lock_before
 
     def test_repr(self):
         """Test __repr__ includes class name and file name."""
@@ -2560,9 +2603,11 @@ def test_signal_from_ptu_irf():
 
 @pytest.mark.parametrize(
     'filename',
-    itertools.chain.from_iterable(
-        glob.glob(f'**/*{ext}', root_dir=DATA, recursive=True)
-        for ext in FILE_EXTENSIONS
+    tuple(
+        itertools.chain.from_iterable(
+            glob.glob(f'**/*{ext}', root_dir=DATA, recursive=True)
+            for ext in FILE_EXTENSIONS
+        )
     ),
 )
 def test_glob(filename):
