@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.6.6
+:Version: 2026.8.8
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -37,18 +37,22 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.13, 3.14.5, 3.15.0b2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.4.6
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.4.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.10.9 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.6.1 (optional)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.15, 3.14.7, 3.15.0rc 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.2
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.7.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.1 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.7.31 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.5 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.2.9 (build)
 
 Revisions
 ---------
+
+2026.8.8
+
+- Add PQOVER file type.
 
 2026.6.6
 
@@ -154,12 +158,19 @@ Other modules for reading or writing PicoQuant files are
 `tttr-toolbox <https://github.com/GCBallesteros/tttr-toolbox/>`_),
 `PAM <https://gitlab.com/PAM-PIE/PAM/-/blob/master/functions/readin/Read_PTU.m>`_,
 `FLOPA <https://github.com/IMCF-Biocev/FLOPA/tree/main/src/flopa/io/ptuio>`_,
+`FLIMKit <https://github.com/alex1075/flim-native-decoders/tree/main/flim_native_decoders/ptu>`_,
 and
 `napari-flim-phasor-plotter
 <https://github.com/zoccoler/napari-flim-phasor-plotter/blob/0.0.6/src/napari_flim_phasor_plotter/_io/readPTU_FLIM.py>`_.
 
 Examples
 --------
+
+Import functions and classes used in these examples:
+
+.. code-block:: python
+
+    >>> from ptufile import PqFile, PtuFile, imwrite, imread
 
 Read properties and tags from any type of PicoQuant unified tagged file:
 
