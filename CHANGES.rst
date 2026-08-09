@@ -1,6 +1,10 @@
 Revisions
 =========
 
+2026.8.8
+
+- Add PQOVER file type.
+
 2026.6.6
 
 - Remove memmap parameter from PtuFile.read_records (breaking).
