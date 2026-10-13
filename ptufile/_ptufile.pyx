@@ -745,7 +745,7 @@ def decode_t3_line(
 
 
 def decode_t3_image(
-    uint_t[:, :, :, :, ::1] histogram,
+    uint_t[:, :, :, :, :, ::1] histogram,
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
@@ -756,12 +756,15 @@ def decode_t3_image(
     const uint32_t line_start,  # mask
     const uint32_t line_stop,  # mask
     const uint32_t frame_change,  # mask
+    const ssize_t nplanes,  # number of Z planes per volume in records
     const ssize_t startt = 0,
+    const ssize_t startz = 0,
     const ssize_t starty = 0,
     const ssize_t startx = 0,
     const ssize_t startc = 0,
     const ssize_t starth = 0,
     const ssize_t bint = 1,
+    const ssize_t binz = 1,
     const ssize_t biny = 1,
     const ssize_t binx = 1,
     const ssize_t binc = 1,
@@ -773,10 +776,11 @@ def decode_t3_image(
 ):
     """Return TCSPC histogram from TTTR T3 records of image measurement."""
     cdef:
-        ssize_t sizec, sizet, sizey, sizex, sizeh
-        ssize_t stopc, stopt, stopy, stopx, stoph
+        ssize_t sizec, sizet, sizez, sizey, sizex, sizeh
+        ssize_t stopc, stopt, stopz, stopy, stopx, stoph
         ssize_t nrecords = records.size
-        ssize_t i, j, ix, iy, iy_binned, iframe, iframe_binned, maxbins_, bidiv
+        ssize_t i, j, ix, iy, iy_binned, iframe, maxbins_, bidiv
+        ssize_t it, iz, it_binned, iz_binned
         uint64_t overflow, overflowj, time_global, time_line_start
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
@@ -800,23 +804,42 @@ def decode_t3_image(
     if maxbins_ == 0:
         raise NotImplementedError(f'not a T3 {format=:02x}')
 
-    if startc < 0 or startt < 0 or starty < 0 or startx < 0 or starth < 0:
+    if nplanes < 1:
+        raise ValueError(f'invalid {nplanes=}')
+    if (
+        startc < 0
+        or startt < 0
+        or startz < 0
+        or starty < 0
+        or startx < 0
+        or starth < 0
+    ):
         raise ValueError(
-            f'invalid {startt=}, {starty=}, {startx=}, {startc=}, or {starth=}'
+            f'invalid {startt=}, {startz=}, {starty=}, {startx=}, '
+            f'{startc=}, or {starth=}'
         )
-    if binc < 1 or bint < 1 or biny < 1 or binx < 1 or binh < 1:
+    if (
+        binc < 1
+        or bint < 1
+        or binz < 1
+        or biny < 1
+        or binx < 1
+        or binh < 1
+    ):
         raise ValueError(
-            f'invalid {bint=}, {biny=}, {binx=}, {binc=}, or {binh=}'
+            f'invalid {bint=}, {binz=}, {biny=}, {binx=}, {binc=}, '
+            f'or {binh=}'
         )
     if times.size != histogram.shape[0]:
         raise ValueError(f'{times.size=} does not match {histogram.shape=}')
     # if wraparound and starth > 0:
     #     raise ValueError(f'can not wrap dtime with {starth=}')
 
-    sizet, sizey, sizex, sizec, sizeh = histogram.shape[:5]
+    sizet, sizez, sizey, sizex, sizec, sizeh = histogram.shape[:6]
 
     with nogil:
         stopt = startt + sizet * bint
+        stopz = startz + sizez * binz
         stopy = starty + sizey * biny
         stopx = startx + sizex * binx
         stopc = startc + sizec * binc
@@ -826,7 +849,10 @@ def decode_t3_image(
         time_line_start = UINT64_MAX
         overflow = 0
         iframe = -2 if skip_first_frame else -1
-        iframe_binned = -1
+        it = -1
+        iz = -1
+        it_binned = -1
+        iz_binned = -1
         iy_binned = -1
         iy = -1
         ix = 0
@@ -878,7 +904,8 @@ def decode_t3_image(
                     # if wraparound and idtime_binned >= sizeh:
                     #     idtime_binned %= sizeh
                     histogram[
-                        iframe_binned,
+                        it_binned,
+                        iz_binned,
                         iy_binned,
                         (ix - startx) // binx,
                         (ichannel - startc) // binc,
@@ -900,14 +927,25 @@ def decode_t3_image(
                         # new frame starts at first line
                         # after start or frame change marker
                         iframe += 1
-                        if iframe == stopt:
-                            break
-                    if iframe >= startt and iy >= starty and iy < stopy:
+                        if iframe >= 0:
+                            it = iframe // nplanes
+                            iz = iframe % nplanes
+                            if it >= stopt:
+                                break
+                    if (
+                        iframe >= 0
+                        and it >= startt
+                        and iz >= startz
+                        and iz < stopz
+                        and iy >= starty
+                        and iy < stopy
+                    ):
                         iy_binned = (iy - starty) // biny
+                        iz_binned = (iz - startz) // binz
                         time_line_start = time_global
-                        if iframe_binned != (iframe - startt) // bint:
-                            iframe_binned = (iframe - startt) // bint
-                            times[iframe_binned] = time_line_start
+                        if it_binned != (it - startt) // bint:
+                            it_binned = (it - startt) // bint
+                            times[it_binned] = time_line_start
                         if scanline:
                             # scan line to next marker to determine
                             # line_time and pixel_time
@@ -1543,6 +1581,7 @@ def encode_t3_image(
     const uint32_t line_start,  # mask
     const uint32_t line_stop,  # mask
     const uint32_t frame_change,  # mask
+    const uint32_t start_time=0,  # nsync of first record
 ):
     """Return GenericT3 records from TCSPC image histogram."""
     # TODO: frame and line markers may be combined in one record
@@ -1572,8 +1611,11 @@ def encode_t3_image(
     else:
         raise ValueError(f'{format=} not supported')
 
+    if start_time >= maxtime:
+        raise ValueError(f'{start_time=} >= {maxtime=}')
+
     with nogil:
-        time = 0
+        time = start_time
         nrecords = 0
 
         for t in range(sizet):
