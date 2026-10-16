@@ -34,7 +34,7 @@
 Ptufile is a Python library to
 
 1. read data and metadata from PicoQuant PTU and related files
-   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, SPQR, and BIN), and
+   (PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, PQOVER, SPQR, and BIN), and
 2. write TCSPC histograms to T3 image mode PTU files.
 
 PTU files contain time correlated single photon counting (TCSPC)
@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.8.8
+:Version: 2026.10.16
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -53,7 +53,8 @@ Install the ptufile package and all dependencies from the
 
     python -m pip install -U "ptufile[all]"
 
-See `Examples`_ for using the programming interface.
+See `Examples`_ and `Documentation <https://www.cgohlke.com/docs/ptufile/>`_
+for using the programming interface.
 
 Source code and support are available on
 `GitHub <https://github.com/cgohlke/ptufile>`_.
@@ -64,18 +65,27 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.15, 3.14.7, 3.15.0rc 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.2
-- `Xarray <https://pypi.org/project/xarray>`_ 2026.7.0 (recommended)
-- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.1 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.7.31 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.16.5 (optional)
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.16, 3.14.8, 3.15.0 64-bit
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
+- `Xarray <https://pypi.org/project/xarray>`_ 2026.9.0 (recommended)
+- `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.2 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.10.15 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.17.0 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
 - `Cython <https://pypi.org/project/cython/>`_ 3.2.9 (build)
 
 Revisions
 ---------
+
+2026.10.16
+
+- Support z-stack images in PTU reader and writer (#5).
+- Support sparse tag indices (#5, breaking).
+- Replace PtuWriter has_frames with dims parameter (breaking).
+- Add volume_time and global_volume_time properties to PtuFile.
+- Add plane parameter to PtuFile.decode_image and imread.
+- Generalize decode_t3_image to 6-dimensional data.
 
 2026.8.8
 
@@ -98,44 +108,6 @@ Revisions
 - Drop support for Python 3.11.
 
 2026.2.6
-
-- Fix code review issues.
-
-2026.1.14
-
-- Improve code quality.
-
-2025.12.12
-
-- Add PQUNI file type.
-- Add attrs properties and return with xarray DataSets.
-- Improve code quality.
-
-2025.11.8
-
-- Fix reading files with negative TTResult_NumberOfRecords.
-- Remove cache argument from PtuFile.read_records (breaking).
-- Add cache_records property to PtuFile to control caching behavior.
-- Derive PqFileError from ValueError.
-- Factor out BinaryFile base class.
-- Build ABI3 wheels.
-
-2025.9.9
-
-- Log error when decoding image with invalid line or frame masks.
-
-2025.7.30
-
-- Add option to specify pixel time for decoding images.
-- Add functions to read and write PicoQuant BIN files.
-- Drop support for Python 3.10.
-
-2025.5.10
-
-- Mark Cython extension free-threading compatible.
-- Support Python 3.14.
-
-2025.2.20
 
 - …
 
@@ -309,7 +281,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.8.8'
+__version__ = '2026.10.16'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -377,6 +349,7 @@ def imread(
     dtype: DTypeLike | None = None,
     channel: int | None = None,
     frame: int | None = None,
+    plane: int | None = None,
     dtime: int | None = None,
     pixel_time: float | None = None,
     bishift: int | None = None,
@@ -397,6 +370,7 @@ def imread(
     dtype: DTypeLike | None = None,
     channel: int | None = None,
     frame: int | None = None,
+    plane: int | None = None,
     dtime: int | None = None,
     pixel_time: float | None = None,
     bishift: int | None = None,
@@ -417,6 +391,7 @@ def imread(
     dtype: DTypeLike | None = None,
     channel: int | None = None,
     frame: int | None = None,
+    plane: int | None = None,
     dtime: int | None = None,
     pixel_time: float | None = None,
     bishift: int | None = None,
@@ -436,6 +411,7 @@ def imread(
     dtype: DTypeLike | None = None,
     channel: int | None = None,
     frame: int | None = None,
+    plane: int | None = None,
     dtime: int | None = None,
     pixel_time: float | None = None,
     bishift: int | None = None,
@@ -450,7 +426,7 @@ def imread(
     Parameters:
         file:
             File name or seekable binary stream.
-        selection, dtype, channel, frame, dtime, pixel_time, bishift,\
+        selection, dtype, channel, frame, plane, dtime, pixel_time, bishift,\
         keepdims, asxarray, out:
             Passed to :py:meth:`PtuFile.decode_image`.
         trimdims, memmap:
@@ -458,7 +434,7 @@ def imread(
 
     Returns:
         image:
-            Decoded TTTR T3 records as up to 5-dimensional image array.
+            Decoded TTTR T3 records as up to 6-dimensional image array.
 
     """
     with PtuFile(file, trimdims=trimdims, memmap=memmap) as ptu:
@@ -467,6 +443,7 @@ def imread(
             dtype=dtype,
             channel=channel,
             frame=frame,
+            plane=plane,
             dtime=dtime,
             bishift=bishift,
             pixel_time=pixel_time,
@@ -484,7 +461,7 @@ def imwrite(
     tcspc_resolution: float,
     pixel_time: float | None = None,
     *,
-    has_frames: bool | None = None,
+    dims: Sequence[str] | None = None,
     record_type: PtuRecordType | None = None,
     pixel_resolution: float | None = None,
     guid: str | uuid.UUID | None = None,
@@ -500,9 +477,11 @@ def imwrite(
             File name or writable binary stream.
         data:
             TCSPC histogram image stack.
-            The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
-            or 'TYXH' (with ``has_frames=True``).
+            The order of dimensions must be ``'[T][Z]YX[C]H'``.
+            See :py:class:`PtuWriter`.
             The dtype must be unsigned integer.
+            TZ stacks are currently not supported by PicoQuant software,
+            only T or Z stacks.
         global_resolution:
             Resolution of time tags in s, typically in ns range.
             The inverse of the synctime or laser frequency.
@@ -515,25 +494,28 @@ def imwrite(
             Photons that cannot be encoded within pixel_time are omitted.
             By default, pixel_time is set just large enough to encode all
             photons.
-        has_frames:
-            4-dimensional data have frames in first axis ('TYXH'), no channels.
-            By default, true if data contains metadata specifying the first
-            dimension is 'T', else false.
+        dims:
+            Axis labels of input ``shape`` in ``'[T][Z]YX[C]H'`` order.
+            Disambiguates 3- to 5-dimensional shapes when the axis order
+            is not the default ('YXH', 'YXCH', or 'TYXCH').
+            For example, ``dims='TYXH'`` or ``dims='ZYXCH'``.
+            By default, inferred from xarray dimension names if available.
         record_type, pixel_resolution, guid, comment, datetime, tags, mode:
             Optional parameters passed to :py:class:`PtuWriter`.
 
     """
-    if hasattr(data, 'dims'):
-        has_frames = 'T' in data.dims and data.dims[0] == 'T'
+    if dims is None and hasattr(data, 'dims'):
+        xdims = [str(d) for d in data.dims]
+        if all(d in 'TZYXCH' for d in xdims):
+            dims = xdims
 
     data = numpy.asarray(data)
 
     if pixel_time is None:
-        data = data.reshape(
-            PtuWriter.normalize_shape(data.shape, has_frames=has_frames)
-        )
+        data = data.reshape(PtuWriter.normalize_shape(data.shape, dims=dims))
+        dims = None  # shape is already normalized to 6D
         pixel_time = global_resolution * max(
-            1, float(numpy.max(data.sum(axis=(3, 4), dtype=numpy.uint64)))
+            1, float(numpy.max(data.sum(axis=(4, 5), dtype=numpy.uint64)))
         )
 
     with PtuWriter(
@@ -544,7 +526,7 @@ def imwrite(
         pixel_time,
         record_type=record_type,
         pixel_resolution=pixel_resolution,
-        has_frames=has_frames,
+        dims=dims,
         guid=guid,
         comment=comment,
         datetime=datetime,
@@ -569,8 +551,9 @@ class PtuWriter:
             File names typically end in '.PTU'.
         shape:
             Shape of TCSPC histogram image stack to write.
-            The order of dimensions must be 'TYXCH', 'YXH', 'YXCH',
-            or 'TYXH' (with ``has_frames=True``).
+            The order of dimensions must be ``'[T][Z]YX[C]H'``.
+            TZ stacks are currently not supported by PicoQuant software,
+            only T or Z stacks.
         global_resolution:
             Resolution of time tags in s, typically in ns range.
             The inverse of the synctime or laser frequency.
@@ -587,8 +570,11 @@ class PtuWriter:
             and 4096 bins, else ``GenericT3``.
         pixel_resolution:
             Resolution of single pixel in μm. The default is 1 μm.
-        has_frames:
-            4-dimensional shape has frames in first axis ('TYXH'), no channels.
+        dims:
+            Axis labels of input ``shape`` in ``'[T][Z]YX[C]H'`` order.
+            Disambiguates 3- to 5-dimensional shapes when the axis order
+            is not the default ('YXH', 'YXCH', or 'TYXCH').
+            For example, ``dims='TYXH'`` or ``dims='ZYXCH'``.
         guid:
             Windows formatted GUID used as global file identifier.
             By default, a random GUID. Write to File_GUID tag.
@@ -617,7 +603,7 @@ class PtuWriter:
     """
 
     _fh: IO[bytes] | None
-    _shape: tuple[int, int, int, int, int]
+    _shape: tuple[int, int, int, int, int, int]  # normalized TZYXCH
     _record_type: PtuRecordType
     _number_records: int
     _number_records_offset: int
@@ -626,6 +612,7 @@ class PtuWriter:
     _global_resolution: float
     _tcspc_resolution: float
     _pixel_time: int
+    _time: int  # nsync at end of last write
 
     _line_start = 1
     _line_stop = 2
@@ -642,7 +629,7 @@ class PtuWriter:
         *,
         record_type: PtuRecordType | None = None,
         pixel_resolution: float | None = None,
-        has_frames: bool | None = None,
+        dims: Sequence[str] | None = None,
         guid: str | uuid.UUID | None = None,
         comment: str | None = None,
         datetime: datetime | None = None,
@@ -666,24 +653,23 @@ class PtuWriter:
         self._number_records_offset = 0
         self._number_frames = 0
         self._number_frames_offset = 0
+        self._time = 0
         self._global_resolution = global_resolution
         self._tcspc_resolution = tcspc_resolution
         self._pixel_time = round(pixel_time / global_resolution)
-        self._shape = shape = PtuWriter.normalize_shape(
-            shape, has_frames=has_frames
-        )
+        self._shape = shape = PtuWriter.normalize_shape(shape, dims=dims)
 
         if record_type is None:
-            if shape[3] <= 2 and shape[4] <= 4096:
+            if shape[4] <= 2 and shape[5] <= 4096:
                 record_type = PtuRecordType.PicoHarpT3
             else:
                 record_type = PtuRecordType.GenericT3
 
         if record_type == PtuRecordType.PicoHarpT3:
-            if shape[3] > 4 or shape[4] > 4096:
+            if shape[4] > 4 or shape[5] > 4096:
                 msg = (
                     f'{record_type=} does not support '
-                    f'{shape[3]} channels and {shape[4]} bins'
+                    f'{shape[4]} channels and {shape[5]} bins'
                 )
                 raise ValueError(msg)
             self._record_type = PtuRecordType.PicoHarpT3
@@ -693,10 +679,10 @@ class PtuWriter:
             PtuRecordType.TimeHarp260NT3,
             PtuRecordType.TimeHarp260PT3,
         }:
-            if shape[3] > 63 or shape[4] > 32768:
+            if shape[4] > 63 or shape[5] > 32768:
                 msg = (
                     f'{record_type=} does not support '
-                    f'{shape[3]} channels and {shape[4]} bins'
+                    f'{shape[4]} channels and {shape[5]} bins'
                 )
                 raise ValueError(msg)
             self._record_type = PtuRecordType.GenericT3
@@ -735,18 +721,20 @@ class PtuWriter:
             'TTResult_SyncRate': round(1.0 / self._global_resolution),
             'TTResultFormat_TTTRRecType': self._record_type,
             'TTResultFormat_BitsPerRecord': 32,
-            'ImgHdr_Dimensions': 3,
+            'ImgHdr_Dimensions': 4 if shape[1] > 1 else 3,
             'ImgHdr_Ident': PtuScannerType.LSM,
             'ImgHdr_LineStart': self._line_start,
             'ImgHdr_LineStop': self._line_stop,
             'ImgHdr_Frame': self._frame_change,
             'ImgHdr_MaxFrames': 0,
             'ImgHdr_TimePerPixel': pixel_time * 1e3,  # ms
-            'ImgHdr_PixX': int(self._shape[2]),
-            'ImgHdr_PixY': int(self._shape[1]),
+            'ImgHdr_PixX': int(self._shape[3]),
+            'ImgHdr_PixY': int(self._shape[2]),
             'ImgHdr_BiDirect': False,
             'ImgHdr_SinCorrection': 0,
         }
+        if shape[1] > 1:
+            critical_tags['ImgHdr_PixZ'] = shape[1]
         pqtags = {
             # required tags written first, allowed to be overwritten by user
             'File_GUID': guid,
@@ -760,7 +748,7 @@ class PtuWriter:
             # other tags allowed to be overwritten by user
             {
                 'ImgHdr_PixResol': float(pixel_resolution),
-                'HW_InpChannels': self._shape[3] + 1,  # used by FlimReader
+                'HW_InpChannels': self._shape[4] + 1,  # used by FlimReader
                 # 'TTResult_StopReason': PtuStopReason(0)
             }
         )
@@ -813,9 +801,12 @@ class PtuWriter:
 
         Parameters:
             data:
-                TCSPC histogram image stack.
-                The shape must be compatible with the shape passed to
-                PtuWriter(). The dtype must be unsigned integer.
+                TCSPC histogram image(s) in ``'[T][Z]YX[C]H'`` order.
+                The size must be a multiple of one ``YXCH`` frame of the
+                shape passed to PtuWriter(), for example, a single plane,
+                a volume, or several volumes.
+                Frames are appended in TZ order.
+                The dtype must be unsigned integer.
 
         """
         from ._ptufile import encode_t3_image
@@ -824,7 +815,15 @@ class PtuWriter:
         if data.dtype.kind != 'u':
             msg = f'{data.dtype=} is not an unsigned integer'
             raise ValueError(msg)
-        data = data.reshape(self._shape)
+        frame_shape = self._shape[2:]
+        frame_size = product(frame_shape)
+        if data.size % frame_size != 0:
+            msg = (
+                f'{data.shape=} is not a multiple of frame shape '
+                f'{frame_shape}'
+            )
+            raise ValueError(msg)
+        data = data.reshape(-1, *frame_shape)
 
         number_photons = int(data.sum(dtype=numpy.uint64))
 
@@ -833,15 +832,17 @@ class PtuWriter:
         else:
             maxtime = 1024
 
-        shape = data.shape
+        nframes = data.shape[0]
+        global_time = nframes * frame_shape[0] * frame_shape[1]
+        global_time *= self._pixel_time
         number_records = (
             number_photons
             # overflows assuming all empty pixels
-            + (shape[0] * shape[1] * shape[2] * self._pixel_time) // maxtime
+            + (self._time + global_time) // maxtime
             # line markers
-            + shape[0] * shape[1] * 2
+            + nframes * frame_shape[0] * 2
             # frame markers
-            + shape[0]
+            + nframes
         )
         records = numpy.zeros(number_records, dtype=numpy.uint32)
 
@@ -853,6 +854,7 @@ class PtuWriter:
             int(2 ** (self._line_start - 1)),
             int(2 ** (self._line_stop - 1)),
             int(2 ** (self._frame_change - 1)),
+            self._time,
         )
         if number_records < 0:
             msg = f'{number_records=} < 0'
@@ -863,13 +865,22 @@ class PtuWriter:
             raise RuntimeError(msg)
         self._fh.write(records[:number_records].tobytes())
 
+        # every pixel consumes exactly pixel_time sync periods
+        self._time = (self._time + global_time) % maxtime
         self._number_records += number_records
-        self._number_frames += shape[0]
+        self._number_frames += nframes
 
     def close(self) -> None:
         """Close file handle after writing final tag values."""
         if self._fh is None:
             return
+
+        nplanes = self._shape[1]
+        if nplanes > 1 and self._number_frames % nplanes != 0:
+            logger().warning(
+                f'number of frames written {self._number_frames} '
+                f'is not a multiple of {nplanes=}'
+            )
 
         if self._number_records_offset > 0:
             self._fh.seek(self._number_records_offset)
@@ -898,22 +909,40 @@ class PtuWriter:
         shape: tuple[int, ...],
         /,
         *,
-        has_frames: bool | None = None,
-    ) -> tuple[int, int, int, int, int]:
-        """Return TCSPC histogram shape normalized to 5D 'TYXCH'."""
+        dims: Sequence[str] | None = None,
+    ) -> tuple[int, int, int, int, int, int]:
+        """Return TCSPC histogram shape normalized to 6D 'TZYXCH'."""
         ndim = len(shape)
-        if ndim == 5:
-            'TYXCH'
+        if dims is not None:
+            dims = [d.upper() for d in dims]
+            if len(dims) != ndim:
+                msg = f'length of {dims=!r} does not match {ndim=}'
+                raise ValueError(msg)
+            invalid = set(dims) - set('TZYXCH')
+            if invalid:
+                msg = f'{dims=!r} contains invalid axis {sorted(invalid)!r}'
+                raise ValueError(msg)
+            positions = ['TZYXCH'.index(d) for d in dims]
+            if len(set(positions)) != len(positions) or positions != sorted(
+                positions
+            ):
+                msg = f'{dims=!r} axes are not in canonical TZYXCH order'
+                raise ValueError(msg)
+            return tuple(
+                shape[dims.index(ax)] if ax in dims else 1 for ax in 'TZYXCH'
+            )  # type: ignore[return-value]
+        if ndim == 6:
+            # TZYXCH
             return shape  # type: ignore[return-value]
-        if ndim == 3:
-            # 'YXH'
-            return (1, shape[0], shape[1], 1, shape[2])
+        if ndim == 5:
+            # TYXCH
+            return (shape[0], 1, shape[1], shape[2], shape[3], shape[4])
         if ndim == 4:
-            if has_frames:
-                # 'TYXH'
-                return (shape[0], shape[1], shape[2], 1, shape[3])
-            # 'YXCH'
-            return (1, shape[0], shape[1], shape[2], shape[3])
+            # YXCH
+            return (1, 1, shape[0], shape[1], shape[2], shape[3])
+        if ndim == 3:
+            # YXH
+            return (1, 1, shape[0], shape[1], 1, shape[2])
 
         msg = f'invalid number of dimensions {len(shape)=}'
         raise ValueError(msg)
@@ -1361,11 +1390,12 @@ class BinaryFile:
 class PqFile(BinaryFile):
     """PicoQuant unified tagged file.
 
-    PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, and SPQR files contain
-    measurement metadata and settings encoded as unified tags.
+    PTU, PHU, PCK, PCO, PFS, PUS, PQRES, PQDAT, PQUNI, PQOVER, and SPQR files
+    contain measurement metadata and settings encoded as unified tags.
 
     ``PqFile`` and subclass instances are not thread safe.
-    All attributes are read-only.
+    Attributes are read-only unless the corresponding property defines a
+    setter.
 
     ``PqFile`` and subclass instances must be closed with
     :py:meth:`PqFile.close`, which is automatically called when using the
@@ -1404,6 +1434,7 @@ class PqFile(BinaryFile):
 
     _TYPE: ClassVar[set[PqFileType]] = set(PqFileType)
     _STR_: tuple[str, ...] = ('type', 'version')  # attributes listed first
+    _MAX_TAG_INDEX: ClassVar[int] = 65535  # limit memory of sparse tags
 
     def __init__(
         self,
@@ -1572,30 +1603,40 @@ class PqFile(BinaryFile):
                             + f' != {tags[tagid][0]!r}'[:16]
                         )
                     tags[tagid] = [value]
+                elif index > self._MAX_TAG_INDEX:
+                    logger().error(
+                        errmsg(
+                            'tag index too large',
+                            tagid,
+                            index,
+                            typecode,
+                            value,
+                        )
+                    )
                 elif tagid not in tags:
-                    logger().error(
-                        errmsg(
-                            'tag with index not in tags',
-                            tagid,
-                            index,
-                            typecode,
-                            value,
-                        )
-                    )
-                    tags[tagid] = [value]
-                elif index != len(tags[tagid]):
-                    logger().error(
-                        errmsg(
-                            'tag index out of order',
-                            tagid,
-                            index,
-                            typecode,
-                            value,
-                        )
-                    )
-                    tags[tagid].append(value)
+                    # sparse indices are valid, missing entries are None
+                    tags[tagid] = [None] * index + [value]
                 else:
-                    tags[tagid].append(value)
+                    values = tags[tagid]
+                    if index >= len(values):
+                        values.extend([None] * (index - len(values)))
+                        values.append(value)
+                    else:
+                        if (
+                            values[index] is not None
+                            and values[index] != value
+                        ):
+                            logger().warning(
+                                errmsg(
+                                    'duplicate tag',
+                                    tagid,
+                                    index,
+                                    typecode,
+                                    value,
+                                )
+                                + f' != {values[index]!r}'[:16]
+                            )
+                        values[index] = value
         except Exception as exc:
             raise PqFileError(
                 errmsg('tag corrupted', tagid, index, typecode, value)
@@ -1906,7 +1947,7 @@ class PtuFile(PqFile):
 
     PTU files contain TTTR records in addition to unified tags.
 
-    ``PtuFile`` instances are not thread-safe. All attributes are read-only.
+    ``PtuFile`` instances are not thread-safe.
 
     ``PtuFile`` is derived from :py:class:`PqFile`.
 
@@ -2026,6 +2067,12 @@ class PtuFile(PqFile):
         ):
             return 3
         if (
+            submode == 3
+            and self.tags.get('ImgHdr_Dimensions', 0) == 4  # optional
+            # and self.tags.get('ImgHdr_PixZ', 1) > 1  # may be missing
+        ):
+            return 4
+        if (
             submode == 2
             and self.tags.get('ImgHdr_Dimensions', 2) == 2  # optional
             # and self.tags.get('ImgHdr_PixX', 1) > 1  # may be missing
@@ -2102,6 +2149,11 @@ class PtuFile(PqFile):
     def number_images(self) -> int:
         """Number of images separated by frame change markers."""
         return self._info.frames
+
+    @property
+    def number_planes(self) -> int:
+        """Number of Z planes."""
+        return max(int(self.tags.get('ImgHdr_PixZ', 1)), 1)
 
     @property
     def number_lines(self) -> int:
@@ -2230,6 +2282,17 @@ class PtuFile(PqFile):
         return self.pixels_in_frame * self.global_pixel_time
 
     @property
+    def global_volume_time(self) -> int:
+        """Global time per z-stack, or :py:attr:`global_frame_time`.
+
+        Multiply with global resolution to get time in s.
+
+        """
+        if self.measurement_ndim == 4:
+            return self.global_frame_time * self.number_planes
+        return self.global_frame_time
+
+    @property
     def global_acquisition_time(self) -> int:
         """Global time of acquisition."""
         # MeasDesc_AcquisitionTime not reliable
@@ -2247,7 +2310,7 @@ class PtuFile(PqFile):
     def pixels_in_line(self) -> int:
         """Number of pixels in line."""
         ndim = self.measurement_ndim
-        if ndim == 3:
+        if ndim in {3, 4}:
             # image
             pixels = self.tags['ImgHdr_PixX']
         elif ndim == 2:
@@ -2265,7 +2328,7 @@ class PtuFile(PqFile):
     @property
     def lines_in_frame(self) -> int:
         """Number of lines in frame."""
-        if self.measurement_ndim == 3:
+        if self.measurement_ndim in {3, 4}:
             # TODO: Warning from the PicoQuant documentation:
             # Attention, in some images one will find a different number
             # of lines than defined by PixY (less or more, even different
@@ -2296,6 +2359,11 @@ class PtuFile(PqFile):
         return self.global_frame_time * self.global_resolution
 
     @property
+    def volume_time(self) -> float:
+        """Time per z-stack, or :py:attr:`frame_time` in s."""
+        return self.global_volume_time * self.global_resolution
+
+    @property
     def acquisition_time(self) -> float:
         """Duration of acquisition in s."""
         # MeasDesc_AcquisitionTime not reliable
@@ -2323,7 +2391,7 @@ class PtuFile(PqFile):
         """File contains image data."""
         return (
             self.tags['Measurement_SubMode'] == 3
-            and self.tags.get('ImgHdr_Dimensions', 1) == 3
+            and self.tags.get('ImgHdr_Dimensions', 1) in {3, 4}
             and 'ImgHdr_PixX' in self.tags  # some Leica PTU are missing this
         )
 
@@ -2395,41 +2463,62 @@ class PtuFile(PqFile):
         else:
             nbins = self.number_bins_max
 
-        ndim = self.measurement_ndim
-        if ndim == 3:
-            return (
-                max(self._info.frames, 1),
-                self.lines_in_frame,
-                self.pixels_in_line,
-                nchannels,
-                nbins,
-            )
-        if ndim == 2:
-            return (
-                max(self._info.lines, 1),
-                self.pixels_in_line,
-                nchannels,
-                nbins,
-            )
-        if ndim in {0, 1}:
-            return (
-                max(1, self._info.photons // self.global_pixel_time),
-                nchannels,
-                nbins,
-            )
-        return ()
+        match self.measurement_ndim:
+            case 4:
+                nframes = self._info.frames
+                nplanes = self.number_planes
+                if nframes % nplanes != 0:
+                    logger().warning(
+                        f'{self!r} '
+                        f'{nframes=} is not a multiple of {nplanes=}. '
+                        'Truncating to last complete z-stack'
+                    )
+                return (
+                    max(nframes // nplanes, 1),
+                    nplanes,
+                    self.lines_in_frame,
+                    self.pixels_in_line,
+                    nchannels,
+                    nbins,
+                )
+            case 3:
+                return (
+                    max(self._info.frames, 1),
+                    self.lines_in_frame,
+                    self.pixels_in_line,
+                    nchannels,
+                    nbins,
+                )
+            case 2:
+                return (
+                    max(self._info.lines, 1),
+                    self.pixels_in_line,
+                    nchannels,
+                    nbins,
+                )
+            case 0 | 1:
+                return (
+                    max(1, self._info.photons // self.global_pixel_time),
+                    nchannels,
+                    nbins,
+                )
+            case _:
+                return ()
 
     @cached_property
     def dims(self) -> tuple[str, ...]:
         """Axes labels for each dimension in image histogram array."""
         if not self.shape:
             return ()
-        ndim = self.measurement_ndim
-        if ndim == 3:
-            return ('T', 'Y', 'X', 'C', 'H')
-        if ndim == 2:
-            return ('T', 'X', 'C', 'H')
-        return ('T', 'C', 'H')
+        match self.measurement_ndim:
+            case 4:
+                return ('T', 'Z', 'Y', 'X', 'C', 'H')
+            case 3:
+                return ('T', 'Y', 'X', 'C', 'H')
+            case 2:
+                return ('T', 'X', 'C', 'H')
+            case _:
+                return ('T', 'C', 'H')
 
     @property
     def sizes(self) -> dict[str, int]:
@@ -2499,11 +2588,21 @@ class PtuFile(PqFile):
         shape = self.shape
         # exact time coordinates must be decoded from records
         coords['T'] = numpy.linspace(
-            0, shape[0] * self.frame_time, shape[0], endpoint=False
+            0, shape[0] * self.volume_time, shape[0], endpoint=False
         )
         res = self.tags.get('ImgHdr_PixResol', None)
         if res is not None:
             res *= 1e-6  # um
+            if ndim > 3:
+                resz = self.tags.get('ImgHdr_PixResolZ', None)
+                if resz is not None:
+                    offset = self.tags.get('ImgHdr_Z0', 0.0) * 1e-6  # um
+                    coords['Z'] = numpy.linspace(
+                        offset,
+                        offset + shape[-5] * resz * 1e-6,
+                        shape[-5],
+                        endpoint=False,
+                    )
             if ndim > 2:
                 offset = self.tags.get('ImgHdr_Y0', 0.0) * 1e-6  # um
                 coords['Y'] = numpy.linspace(
@@ -2529,6 +2628,7 @@ class PtuFile(PqFile):
             'frame_time': self.frame_time,
             'frequency': self.frequency,
             'global_acquisition_time': self.global_acquisition_time,
+            'global_volume_time': self.global_volume_time,
             'global_frame_time': self.global_frame_time,
             'global_line_time': self.global_line_time,
             'global_pixel_time': self.global_pixel_time,
@@ -2557,6 +2657,8 @@ class PtuFile(PqFile):
             'T' in self._trimdims
             and 'ImgHdr_PixY' in self.tags
             and self.tags['Measurement_SubMode'] == 3
+            # trimming incomplete frames would misalign Z planes
+            and self.measurement_ndim != 4
         ):
             lines_in_frame = max(1, self.tags['ImgHdr_PixY'])
 
@@ -2732,7 +2834,8 @@ class PtuFile(PqFile):
                 If ``'memmap'``, create a memory-mapped array in a
                 temporary file.
                 If a ``numpy.ndarray``, a writable, initialized array
-                of :py:attr:`shape` and unsigned integer dtype.
+                matching the resulting 2D histogram shape and unsigned
+                integer dtype.
                 If a ``file name`` or ``open file``, create a
                 memory-mapped array in the specified file.
 
@@ -2821,6 +2924,7 @@ class PtuFile(PqFile):
         records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
         frame: int | None = None,
+        plane: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
         pixel_time: float | None = None,
@@ -2839,6 +2943,7 @@ class PtuFile(PqFile):
         records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
         frame: int | None = None,
+        plane: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
         pixel_time: float | None = None,
@@ -2857,6 +2962,7 @@ class PtuFile(PqFile):
         records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
         frame: int | None = None,
+        plane: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
         pixel_time: float | None = None,
@@ -2874,6 +2980,7 @@ class PtuFile(PqFile):
         records: NDArray[numpy.uint32] | None = None,
         dtype: DTypeLike | None = None,
         frame: int | None = None,
+        plane: int | None = None,
         channel: int | None = None,
         dtime: int | None = None,
         pixel_time: float | None = None,
@@ -2882,7 +2989,7 @@ class PtuFile(PqFile):
         asxarray: bool = False,
         out: OutputType = None,
     ) -> NDArray[Any] | DataArray:
-        """Return T3 mode point, line, or image histogram.
+        """Return T3 mode point, line, image, or z-stack histogram.
 
         The histogram may not include photons counted during incomplete frame
         scans or during line retraces.
@@ -2905,8 +3012,13 @@ class PtuFile(PqFile):
                 The default is ``uint16``. Increase the bit depth to avoid
                 overflows when integrating.
             frame:
-                If < 0, integrate time axis, else return specified frame.
+                If < 0, integrate time axis, else return specified frame
+                (or volume for z-stacks).
                 Overrides ``selection`` for axis ``T``.
+            plane:
+                If < 0, integrate Z axis, else return specified plane.
+                Overrides ``selection`` for axis ``Z``.
+                Only valid for z-stacks.
             channel:
                 If < 0, integrate channel axis, else return specified channel.
                 Overrides ``selection`` for axis ``C``.
@@ -2918,8 +3030,9 @@ class PtuFile(PqFile):
                 Overrides ``selection`` for axis ``H``.
             pixel_time: float, optional
                 Time per pixel in s.
-                If zero, determine pixel times per line from line scan markers
-                (cannot be used with bidirectional or line scans).
+                If zero, determine pixel times per line from line scan markers.
+                Not supported for line-scan measurements or sinusoidal
+                scanning. Bidirectional image scans are supported.
                 The default is :py:attr:`PtuFile.pixel_time`.
             bishift:
                 Global time shift of odd vs. even lines in bidirectional mode.
@@ -2943,9 +3056,10 @@ class PtuFile(PqFile):
 
         Returns:
             image:
-                Decoded TTTR T3 records as up to 5-dimensional image array:
+                Decoded TTTR T3 records as up to 6-dimensional image array:
 
-                - ``'T'`` time/frame
+                - ``'T'`` time/frame/volume
+                - ``'Z'`` focal plane for z-stacks
                 - ``'Y'`` slow scan axis for image scans
                 - ``'X'`` fast scan axis for line and image scans
                 - ``'C'`` channel
@@ -3013,6 +3127,14 @@ class PtuFile(PqFile):
                 msg = f'{frame=} out of range'
                 raise IndexError(msg)
             selection[0] = frame if frame >= 0 else slice(None, None, -1)
+        if plane is not None:
+            if ndim != 6:
+                msg = f'{plane=} requires z-stack'
+                raise IndexError(msg)
+            if plane >= shape[1]:
+                msg = f'{plane=} out of range'
+                raise IndexError(msg)
+            selection[1] = plane if plane >= 0 else slice(None, None, -1)
         if channel is not None:
             if channel >= shape[-2]:
                 msg = f'{channel=} out of range'
@@ -3128,11 +3250,19 @@ class PtuFile(PqFile):
         if records is None:
             records = self.read_records(copy=False)
 
-        if ndim == 5:
+        if ndim in {5, 6}:
+            if ndim == 6:
+                nplanes = self.number_planes
+                histogram6 = histogram
+            else:
+                nplanes = 1
+                histogram6 = histogram.reshape(shape[0], 1, *shape[1:])
+                start.insert(1, 0)
+                step.insert(1, 1)
             if (
                 self.line_start_mask == 0  # noqa: PLR1714
                 or self.line_stop_mask == 0
-                or (self.frame_change_mask == 0 and shape[0] > 1)
+                or (self.frame_change_mask == 0 and shape[0] * nplanes > 1)
                 or self.line_stop_mask == self.line_start_mask
                 or self.frame_change_mask == self.line_start_mask
                 or self.frame_change_mask == self.line_stop_mask
@@ -3144,7 +3274,7 @@ class PtuFile(PqFile):
                     f'0b{self.frame_change_mask:b})'
                 )
             decode_t3_image(
-                histogram,
+                histogram6,
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
@@ -3155,6 +3285,7 @@ class PtuFile(PqFile):
                 self.line_start_mask,
                 self.line_stop_mask,
                 self.frame_change_mask,
+                nplanes,
                 *start,
                 *step,
                 0 if bishift is None else bishift,
@@ -3162,6 +3293,9 @@ class PtuFile(PqFile):
                 self.is_sinusoidal,
                 self._info.skip_first_frame,
             )
+            if ndim == 5:
+                del start[1]
+                del step[1]
         elif ndim == 4:
             # not tested
             if (
@@ -3242,6 +3376,7 @@ class PtuFile(PqFile):
         *,
         samples: int | None = None,
         frame: int | None = None,
+        plane: int | None = None,
         channel: int | None = None,
         dtime: int | None = -1,
         verbose: bool = False,
@@ -3257,6 +3392,9 @@ class PtuFile(PqFile):
             frame:
                 If < 0, integrate time axis, else show specified frame.
                 By default, all frames are shown. Applies to T3 images.
+            plane:
+                If < 0, integrate Z axis, else show specified plane.
+                By default, all planes are shown. Applies to T3 z-stacks.
             channel:
                 If < 0, integrate channel axis, else show specified channel.
                 By default, all channels are shown. Applies to T3 images.
@@ -3283,7 +3421,11 @@ class PtuFile(PqFile):
             if self.measurement_ndim > 1:
                 t.start()
                 histogram: Any = self.decode_image(
-                    frame=frame, channel=channel, dtime=dtime, asxarray=True
+                    frame=frame,
+                    plane=plane if self.measurement_ndim == 4 else None,
+                    channel=channel,
+                    dtime=dtime,
+                    asxarray=True,
                 )
                 if verbose:
                     print()
@@ -3292,7 +3434,12 @@ class PtuFile(PqFile):
                     print(histogram.squeeze())
                 imshow(
                     numpy.transpose(
-                        histogram.values, (0, 3, 4, 1, 2)
+                        histogram.values,
+                        (
+                            (0, 3, 4, 1, 2)
+                            if histogram.ndim == 5
+                            else (0, 4, 5, 1, 2, 3)
+                        ),
                     ).squeeze(),
                     title=repr(self),
                     photometric='minisblack',
@@ -3620,7 +3767,10 @@ class PtuInfo:
     """Number of marker events."""
 
     frames: int
-    """Number of frames detected. May exclude incomplete frames."""
+    """Number of frames detected.
+
+    Includes time frames and z-planes. May exclude incomplete frames.
+    """
 
     lines: int
     """Number of lines between line markers."""
