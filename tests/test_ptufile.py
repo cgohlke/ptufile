@@ -31,7 +31,7 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2026.8.8
+:Version: 2026.10.16
 
 """
 
@@ -47,11 +47,13 @@ import pathlib
 import sys
 import sysconfig
 import tempfile
+import types
 import uuid
 
 import numpy
 import pytest
-from numpy.testing import assert_almost_equal, assert_array_equal
+from numpy import array_equal  # faster than numpy.testing.assert_array_equal
+from numpy.testing import assert_allclose, assert_almost_equal
 
 import ptufile
 import ptufile.numcodecs
@@ -71,6 +73,7 @@ from ptufile import (
     PtuMeasurementWarnings,
     PtuRecordType,
     PtuScannerType,
+    PtuStopReason,
     PtuWriter,
     __version__,
     binread,
@@ -90,10 +93,14 @@ try:
 except ImportError:
     xarray = None  # type: ignore[assignment]
 
-try:
-    from matplotlib import pyplot
-except ImportError:
-    pyplot = None  # type: ignore[assignment]
+pyplot: types.ModuleType | None
+if os.environ.get('PTUFILE_DISABLE_PYPLOT'):
+    pyplot = None
+else:
+    try:
+        from matplotlib import pyplot
+    except ImportError:
+        pyplot = None
 
 
 RNG = numpy.random.default_rng(42)
@@ -140,7 +147,10 @@ def test_import_xarray():
 
 def test_import_matplotlib():
     """Assert matplotlib is installed."""
-    assert pyplot is not None
+    if os.environ.get('PTUFILE_DISABLE_PYPLOT') == '1':
+        assert pyplot is None
+    else:
+        assert pyplot is not None
 
 
 class TestBinaryFile:
@@ -244,13 +254,12 @@ class TestBinaryFile:
 
     def test_file_extension_fails(self):
         """Test BinaryFile with wrong file extension fails."""
-        ext = BinaryFile._ext
-        BinaryFile._ext = {'.lif'}
-        try:
-            with pytest.raises(ValueError):
-                BinaryFile(self.filename)
-        finally:
-            BinaryFile._ext = ext
+
+        class TestFile(BinaryFile):
+            _ext = {'.test'}  # noqa: RUF012
+
+        with pytest.raises(ValueError):
+            TestFile(self.filename)
 
     def test_file_not_seekable(self):
         """Test BinaryFile with non-seekable file fails."""
@@ -581,7 +590,7 @@ def test_pck():
         assert pq.type == PqFileType.PCK
         assert pq.version == '1.0.00'
         assert pq.tags['File_Comment'].startswith('Check point file of ')
-        assert_array_equal(
+        assert array_equal(
             pq.tags['ChkHistogram'][:6], [96, 150, 151, 163, 153, 145]
         )
         attrs = pq.attrs
@@ -737,12 +746,88 @@ def test_ptu(filetype):
             assert ptu.tags['\x02HWInpChan_CFDLeveld'] == [100]  # corrupted?
             assert not ptu.tags['HW_ExternalRefClock']
 
+            # BinaryFile properties
+            assert ptu.name == 'hazelnut_FLIM_single_image.ptu'
+            assert ptu.filesize == 24285248
+            assert not ptu.writable
+            assert not ptu.closed
+            if filetype is str:
+                assert ptu.filepath == str(filename)
+                assert isinstance(ptu.lock, contextlib.nullcontext)
+
+            # PtuFile properties
+            assert ptu.record_offset == 4616
+            assert ptu.measurement_warnings is None
+            assert ptu.hardware_features is None
+            assert ptu.stop_reason == PtuStopReason.MANUAL
+            assert ptu.global_resolution == 1.281722635221738e-08
+            assert ptu.tcspc_resolution == 9.696969697e-11
+            assert ptu.number_records == 6070158
+            assert ptu.number_photons == 6065123
+            assert ptu.number_markers == 2565
+            assert ptu.number_images == 5
+            assert ptu.number_planes == 1
+            assert ptu.number_lines == 1280
+            assert ptu.number_channels_max == 4
+            assert ptu.number_channels == 1
+            assert ptu.active_channels == (0,)
+            assert ptu.number_bins_max == 4096
+            assert ptu.number_bins == 139
+            assert ptu.number_bins_in_period == 132
+            assert ptu.line_start_mask == 1
+            assert ptu.line_stop_mask == 2
+            assert ptu.frame_change_mask == 4
+            assert ptu.global_pixel_time == 494
+            assert ptu.global_line_time == 126464
+            assert ptu.global_frame_time == 32374784
+            assert ptu.global_volume_time == 32374784
+            assert ptu.global_acquisition_time == 161873920
+            assert ptu.pixels_in_frame == 65536
+            assert ptu.pixels_in_line == 256
+            assert ptu.lines_in_frame == 256
+            assert ptu.pixel_time == 6.331709817995386e-06
+            assert ptu.line_time == 0.0016209177134068188
+            assert ptu.frame_time == 0.4149549346321456
+            assert ptu.volume_time == 0.4149549346321456
+            assert ptu.acquisition_time == 2.074774673160728
+            assert ptu.frequency == 78020000.0
+            assert ptu.syncrate == 78020000
+            assert ptu.is_image
+            assert ptu.is_t3
+            assert not ptu.is_bidirectional
+            assert not ptu.is_sinusoidal
+            assert not ptu.use_xarray
+            assert ptu.cache_records == (filetype is not mmap)
+            assert ptu.dtype == numpy.uint16
+            assert ptu.shape == (5, 256, 256, 1, 139)
+            assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
+            assert ptu.sizes == {'T': 5, 'Y': 256, 'X': 256, 'C': 1, 'H': 139}
+            assert ptu.ndims == 5
+            assert ptu.nbytes == 91095040
+            assert ptu.size == 45547520
+            assert ptu.itemsize == 2
+
+            coords = ptu.coords
+            assert tuple(coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
+            for dim, size in ptu.sizes.items():
+                assert coords[dim].size == size
+            assert_allclose(coords['T'][[1, -1]], [0.41495493, 1.65981974])
+            assert_allclose(coords['Y'][[1, -1]], [1.46326157e-7, 3.731317e-5])
+            assert_allclose(coords['X'][[1, -1]], [1.46326157e-7, 3.731317e-5])
+            assert array_equal(coords['C'], [0])
+            assert_allclose(
+                coords['H'][[1, -1]], [9.6969697e-11, 1.3381818e-8]
+            )
+
             attrs = ptu.attrs
             assert attrs['type'] == ptu.type.name
             assert attrs['name'] == ptu.name
             assert attrs['guid'] == str(ptu.guid)
             assert attrs['datetime'] is None
             assert attrs['tags'] == ptu.tags
+            assert attrs['filepath'] == ptu.filepath
+            assert attrs['version'] == ptu.version
+            assert attrs['comment'] == ptu.comment
 
             assert attrs['acquisition_time'] == ptu.acquisition_time
             assert attrs['active_channels'] == ptu.active_channels
@@ -751,6 +836,7 @@ def test_ptu(filetype):
             assert (
                 attrs['global_acquisition_time'] == ptu.global_acquisition_time
             )
+            assert attrs['global_volume_time'] == ptu.global_volume_time
             assert attrs['global_frame_time'] == ptu.global_frame_time
             assert attrs['global_line_time'] == ptu.global_line_time
             assert attrs['global_pixel_time'] == ptu.global_pixel_time
@@ -803,7 +889,7 @@ def test_phu(filetype):
             assert attrs['tcspc_resolution'] == phu.tcspc_resolution
             # assert attrs['histogram_resolutions']==phu.histogram_resolutions
 
-            assert_array_equal(
+            assert array_equal(
                 phu.tags['HistResDscr_DataOffset'],
                 [11224, 142296, 273368, 404440],
             )
@@ -813,7 +899,7 @@ def test_phu(filetype):
                 for h in histograms:
                     assert h.shape == (32768,)
                 assert histograms[2][1] == 3
-                assert_array_equal(phu.histograms(2)[0], histograms[2])
+                assert array_equal(phu.histograms(2)[0], histograms[2])
             if pyplot is not None:
                 phu.plot(show=False, verbose=False)
                 phu.plot(show=False, verbose=True)
@@ -915,17 +1001,17 @@ def test_ptu_t3_image():
         im = ptu.decode_image(channel=0, frame=2, dtime=-1, dtype='uint32')
         assert im.shape == (1, 256, 256, 1, 1)
         assert im.dtype == numpy.uint32
-        assert_array_equal(im[0, ..., 0, 0], im0[2, :, :, 0].sum(axis=-1))
+        assert array_equal(im[0, ..., 0, 0], im0[2, :, :, 0].sum(axis=-1))
 
         im = ptu.decode_image(channel=0, frame=2, dtime=99, dtype='uint32')
         assert im.shape == (1, 256, 256, 1, 99)
-        assert_array_equal(
+        assert array_equal(
             im[0, :, :, 0].sum(axis=-1), im0[2, :, :, 0, :99].sum(axis=-1)
         )
 
         im = ptu.decode_image(channel=0, frame=2, dtime=199, dtype='uint32')
         assert im.shape == (1, 256, 256, 1, 199)
-        assert_array_equal(
+        assert array_equal(
             im[0, :, :, 0].sum(axis=-1), im0[2, :, :, 0].sum(axis=-1)
         )
 
@@ -933,20 +1019,106 @@ def test_ptu_t3_image():
             [2, slice(0, 32), slice(100, 132), None, slice(None, None, -1)]
         )
         assert im.shape == (1, 32, 32, 1, 1)
-        assert_array_equal(im[..., 0], im0[2:3, :32, 100:132].sum(axis=-1))
+        assert array_equal(im[..., 0], im0[2:3, :32, 100:132].sum(axis=-1))
 
         im = ptu.decode_image(
             [slice(1, None, 2)],  # bin by 2 frames starting from second
             dtime=-1,
         )
         assert im.shape == (2, 256, 256, 1, 1)
-        assert_array_equal(
+        assert array_equal(
             im[1, :, :, :, 0], im0[3:5].sum(axis=0).sum(axis=-1)
         )
         # TODO: verify values
 
         with pytest.raises(ValueError):
             ptu.decode_image(dtype='int16')
+
+
+def test_ptu_t3_zstack():
+    """Test decode T3 z-stack image."""
+    # https://github.com/cgohlke/ptufile/issues/5
+    filename = DATA / 'issue5/RawImage.ptu'
+    with PtuFile(filename) as ptu:
+        str(ptu)
+        assert ptu.record_type == PtuRecordType.GenericT3
+        assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
+        assert ptu.scanner == PtuScannerType.FLIMBEE
+        assert ptu.measurement_ndim == 4
+        assert ptu.is_image
+        assert ptu.number_planes == 11
+        assert ptu.number_images == 11
+        assert ptu.number_lines == 1408
+        assert ptu.number_photons == 1134
+        assert ptu.shape == (1, 11, 128, 128, 1, 1248)
+        assert ptu.dims == ('T', 'Z', 'Y', 'X', 'C', 'H')
+        assert ptu.active_channels == (1,)
+        assert ptu.global_pixel_time == 76
+        assert ptu.global_volume_time == ptu.global_frame_time * 11
+        assert_allclose(ptu.coords['Z'], numpy.arange(11) * 1e-6, atol=1e-9)
+
+        # sparse tag indices
+        tags = ptu.tags
+        assert tags['DetectorCount'] == 5
+        assert tags['Detector'] == [
+            'Detector 1 (HPD)',
+            'Detector 2 (SPAD)',
+            'Detector 3 (SPAD)',
+            'Detector 4 (SPAD)',
+            'Detector 5 (PDA-23)',
+        ]
+        assert tags['DetectorInUse'] == [False, True, False, False, False]
+        assert tags['DetectorTCSPCChan'] == [None, None, None, None, 10]
+        assert tags['DetectorNumTCSPCChan'] == [None, None, None, None, 23]
+
+        im0 = ptu.decode_image()
+        assert im0.shape == (1, 11, 128, 128, 1, 1248)
+        assert im0.sum() == 338  # photons within line scans
+        assert array_equal(
+            im0.sum(axis=(0, 2, 3, 4, 5)),
+            [84, 113, 30, 23, 19, 11, 19, 15, 13, 5, 6],
+        )
+
+        im = ptu.decode_image(plane=3)
+        assert im.shape == (1, 1, 128, 128, 1, 1248)
+        assert array_equal(im, im0[:, 3:4])
+
+        im = ptu.decode_image(plane=-1, dtime=-1, dtype='uint32')
+        assert im.shape == (1, 1, 128, 128, 1, 1)
+        assert array_equal(
+            im[:, 0, ..., 0], im0.sum(axis=(1, 5), dtype=numpy.uint32)
+        )
+
+        im = ptu.decode_image(
+            [0, slice(2, 10, 4), slice(0, 64), ..., slice(None, None, -1)],
+            dtype='uint32',
+        )
+        assert im.shape == (1, 2, 64, 128, 1, 1)
+        expected = im0[:, 2:10, :64].reshape(1, 2, 4, 64, 128, 1, 1248)
+        assert array_equal(
+            im[..., 0], expected.sum(axis=(2, 6), dtype=numpy.uint32)
+        )
+
+        im = ptu[0, 1, ..., 0, ::-1]
+        assert im.shape == (128, 128)
+        assert array_equal(im, im0[0, 1, :, :, 0].sum(axis=-1))
+
+        if xarray is not None:
+            xim = ptu.decode_image(plane=5, dtime=-1, asxarray=True)
+            assert xim.dims == ('T', 'Z', 'Y', 'X', 'C', 'H')
+            assert_allclose(xim.coords['Z'], [5e-6], atol=1e-9)
+            xim = ptu.decode_image(plane=5, keepdims=False, asxarray=True)
+            assert xim.dims == ('T', 'Y', 'X', 'C', 'H')
+            assert 'Z' not in xim.coords
+
+        with pytest.raises(IndexError):
+            ptu.decode_image(plane=11)
+
+    filename = (
+        DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
+    )
+    with PtuFile(filename) as ptu, pytest.raises(IndexError):
+        ptu.decode_image(plane=0)
 
 
 def test_ptu_channels():
@@ -972,7 +1144,7 @@ def test_ptu_channels():
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
         assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
         assert ptu.active_channels == (2, 3)
-        assert_array_equal(ptu.coords['C'], (2, 3))
+        assert array_equal(ptu.coords['C'], (2, 3))
         # TODO: verify coords
 
         assert ptu.frame_change_mask == 4
@@ -1012,8 +1184,8 @@ def test_ptu_channels():
 
         histogram = ptu.decode_histogram(asxarray=True)
         assert histogram.shape == (2, 501)
-        assert_array_equal(histogram.coords['C'], (2, 3))
-        assert_array_equal(histogram[1].coords['C'], (3,))
+        assert array_equal(histogram.coords['C'], (2, 3))
+        assert histogram[1].coords['C'] == 3
 
         histogram = ptu.decode_histogram(asxarray=True, dtime=0)
         assert histogram.shape == (2, 500)
@@ -1022,12 +1194,12 @@ def test_ptu_channels():
         assert histogram.shape == (2, 100)
 
         image = ptu.decode_image(asxarray=True, dtime=-1)
-        assert_array_equal(image.coords['C'], (2, 3))
-        assert_array_equal(image[..., 1, :].coords['C'], (3,))
-        assert_array_equal(ptu._coords_c, (2, 3))
+        assert array_equal(image.coords['C'], (2, 3))
+        assert image[..., 1, :].coords['C'] == 3
+        assert array_equal(ptu._coords_c, (2, 3))
 
         image = ptu.decode_image(asxarray=True, channel=1, dtime=-1)
-        assert_array_equal(image.coords['C'], (3,))
+        assert array_equal(image.coords['C'], (3,))
 
         image = ptu.decode_image(
             asxarray=True, channel=1, dtime=-1, keepdims=False
@@ -1039,12 +1211,12 @@ def test_ptu_channels():
         assert ptu.shape == (3, 512, 512, 64, 32768)
         assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
         assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
-        assert_array_equal(ptu.coords['C'][[0, -1]], (0, 63))
-        assert_array_equal(ptu._coords_c[[0, -1]], (0, 63))
+        assert array_equal(ptu.coords['C'][[0, -1]], (0, 63))
+        assert array_equal(ptu._coords_c[[0, -1]], (0, 63))
 
         if xarray is not None:
             image = ptu.decode_image(asxarray=True, dtime=-1, channel=2)
-            assert_array_equal(image.coords['C'], (2,))
+            assert array_equal(image.coords['C'], (2,))
 
 
 def test_ptu_t3_sinusoidal():
@@ -1191,7 +1363,7 @@ def test_ptu_t3_bidirectional():
         m, n = 421, 440
         selection = (0, slice(m, n), slice(m, n), 0, slice(None, None, -1))
         im1 = ptu.decode_image(selection, records=records, keepdims=False)
-        assert_array_equal(im[m:n, m:n], im1)
+        assert array_equal(im[m:n, m:n], im1)
 
         # x-shift by one pixel
         im = ptu.decode_image(
@@ -1285,7 +1457,7 @@ def test_ptu_t3_bidirectional_sinusoidal():
             slice(None, None, -1),
         )
         im1 = ptu.decode_image(selection, records=records, keepdims=False)
-        assert_array_equal(im[m:n, m:n], im1)
+        assert array_equal(im[m:n, m:n], im1)
 
         # x-shift by one pixel
         im = ptu.decode_image(
@@ -1461,7 +1633,7 @@ def test_ptu_read_records(copy, memmap):
         assert ptu.read_records() is not records
 
         im1 = ptu.decode_image(records=records, frame=1, channel=1, dtime=-1)
-        assert_array_equal(im0, im1)
+        assert array_equal(im0, im1)
 
 
 @pytest.mark.parametrize('output', ['ndarray', 'memmap', 'filename'])
@@ -1518,13 +1690,13 @@ def test_ptu_getitem():
         # slice
         im = ptu[-89:-34:3, ..., :, 1:2, ::-1]
         assert im0.dtype == 'uint32'
-        assert_array_equal(im, im0)
+        assert array_equal(im, im0)
         ptu.dtype = 'uint16'
         # slice uint16
         im = ptu[11:66:3, ..., -1, ::-1]
         assert im.shape == (19, 512, 512)
         assert im.dtype == 'uint16'
-        assert_array_equal(im, im0.squeeze())
+        assert array_equal(im, im0.squeeze())
 
         if xarray is None:
             return
@@ -2006,17 +2178,18 @@ def test_issue_record_number(memmap, caplog):
 
 
 def test_issue_tag_index_order(caplog):
-    """Test tag index out of order."""
+    """Test sparse tag indices."""
     filename = DATA / 'picoquant-sample-data/hydraharp/v10_t2.ptu'
-    with caplog.at_level(logging.ERROR):  # noqa: SIM117
+    with caplog.at_level(logging.WARNING):  # noqa: SIM117
         with PqFile(filename) as pq:
             str(pq)
-            assert 'tag index out of order' in caplog.text
-            assert 'UsrHeadName' in caplog.text
+            assert 'UsrHeadName' not in caplog.text
             assert pq.type == PqFileType.PTU
             assert pq.version == '1.0.00'
             assert pq.tags['UsrHeadName'] == [
+                None,
                 '405.0nm (DC405)',
+                None,
                 '485.0nm (DC485)',
             ]
 
@@ -2145,7 +2318,13 @@ def test_imread():
 @pytest.mark.parametrize('counts', [0, 1, 87])
 @pytest.mark.parametrize(
     'shape',
-    [(31, 33, 63), (5, 31, 33, 63), (31, 33, 2, 63), (5, 31, 33, 2, 63)],
+    [
+        (31, 33, 63),
+        (5, 31, 33, 63),
+        (31, 33, 2, 63),
+        (5, 31, 33, 2, 63),
+        (2, 3, 31, 33, 2, 63),
+    ],
 )
 @pytest.mark.parametrize(
     'record_type', [PtuRecordType.PicoHarpT3, PtuRecordType.GenericT3]
@@ -2157,13 +2336,13 @@ def test_imwrite(record_type, pixel_time, shape, counts):
     else:
         data = numpy.zeros(shape, numpy.uint8)
 
-    has_frames = data.shape[0] == 5
+    dims = 'TYXH' if data.ndim == 4 and data.shape[0] == 5 else None
     if data.ndim == 3:
         shape = (1, 31, 33, 1, 63)
         if counts:
             data[..., -1] = 1
     elif data.ndim == 4:
-        if has_frames:
+        if dims:
             shape = (5, 31, 33, 1, 63)
             if counts:
                 data[..., -1] = 1
@@ -2188,7 +2367,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
         record_type=record_type,
         pixel_time=pixel_time,
         pixel_resolution=0.5,
-        has_frames=has_frames,
+        dims=dims,
         comment=comment,
         guid=guid,
         tags={
@@ -2202,6 +2381,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
     data = data.reshape(shape)
     if counts == 0:
         data = data[..., :1, :1]
+    zstack = data.ndim == 6
 
     with PtuFile(buf) as ptu:
         str(ptu)
@@ -2211,7 +2391,7 @@ def test_imwrite(record_type, pixel_time, shape, counts):
         assert ptu.measurement_mode == PtuMeasurementMode.T3
         assert ptu.measurement_submode == PtuMeasurementSubMode.IMAGE
         assert ptu.scanner == PtuScannerType.LSM
-        assert ptu.measurement_ndim == 3
+        assert ptu.measurement_ndim == (4 if zstack else 3)
         assert ptu.is_image
         assert ptu.is_t3
         assert ptu.comment == comment
@@ -2221,20 +2401,22 @@ def test_imwrite(record_type, pixel_time, shape, counts):
         assert ptu.global_resolution == 4e-8
         if pixel_time is not None:
             assert ptu.pixel_time == pixel_time
-            assert ptu.global_line_time == pixel_time / 4e-8 * shape[2]
+            assert ptu.global_line_time == pixel_time / 4e-8 * shape[-3]
             assert ptu._info.line_time == ptu.global_line_time
 
-        assert ptu.tags['ImgHdr_MaxFrames'] == shape[0]
-        assert ptu.tags['HW_InpChannels'] == shape[3] + 1
+        assert ptu.tags['ImgHdr_MaxFrames'] == (
+            shape[0] * shape[1] if zstack else shape[0]
+        )
+        assert ptu.tags['HW_InpChannels'] == shape[-2] + 1
         assert ptu.tags['ImgHdr_PixResol'] == 0.5
         assert ptu.tags['HW_Markers'] == 4
         assert ptu.tags['HWMarkers_Enabled'] == [True, True, True, True]
         assert ptu.tags['TTResult_MDescWarningFlags'] == 2
 
         data2 = ptu.decode_image()
-        numpy.testing.assert_array_equal(data2, data)
+        assert array_equal(data2, data)
         data2 = ptu.decode_image(pixel_time=0.0)
-        numpy.testing.assert_array_equal(data2, data)
+        assert array_equal(data2, data)
 
 
 @pytest.mark.parametrize(
@@ -2279,7 +2461,7 @@ def test_imwrite_rewrite(record_type):
             assert ptu.dims == ('T', 'Y', 'X', 'C', 'H')
             assert tuple(ptu.coords.keys()) == ('T', 'Y', 'X', 'C', 'H')
             assert ptu.active_channels == (0, 1)
-            assert_array_equal(ptu.coords['C'], (0, 1))
+            assert array_equal(ptu.coords['C'], (0, 1))
             # TODO: verify coords
 
             assert ptu.guid == ptu0.guid
@@ -2325,7 +2507,7 @@ def test_imwrite_rewrite(record_type):
 
             data2 = ptu.decode_image()
 
-    numpy.testing.assert_array_equal(data2, data)
+    assert array_equal(data2, data)
 
 
 @pytest.mark.parametrize('count', [0, 1, 87])
@@ -2360,7 +2542,136 @@ def test_imwrite_pixel(record_type, count):
 
     assert records.size == count + 3
     assert histogram.shape == (1, 1)
-    numpy.testing.assert_array_equal(image, data)
+    assert array_equal(image, data)
+
+
+def test_imwrite_zstack():
+    """Test imwrite function with z-stack data."""
+    t, z, y, x, c, h = 2, 3, 16, 16, 2, 32
+    data = RNG.integers(0, 3, (t, z, y, x, c, h), numpy.uint16)
+    data[..., -1] = 1
+
+    buf = io.BytesIO()
+    imwrite(
+        buf,
+        data,
+        global_resolution=4e-8,
+        tcspc_resolution=8e-11,
+        pixel_time=0.1,
+    )
+    buf.seek(0)
+
+    with PtuFile(buf) as ptu:
+        assert ptu.measurement_ndim == 4
+        assert ptu.tags['ImgHdr_Dimensions'] == 4
+        assert ptu.tags['ImgHdr_PixZ'] == z
+        assert ptu.tags['ImgHdr_MaxFrames'] == t * z
+        assert ptu.tags['ImgHdr_PixX'] == x
+        assert ptu.tags['ImgHdr_PixY'] == y
+        assert ptu.shape == (t, z, y, x, c, h)
+        assert ptu.dims == ('T', 'Z', 'Y', 'X', 'C', 'H')
+        assert ptu.number_photons == int(data.sum())
+        assert array_equal(ptu.decode_image(), data)
+        assert array_equal(ptu.decode_image(pixel_time=0.0), data)
+        assert array_equal(ptu.decode_image(frame=1, plane=2), data[1:2, 2:3])
+        assert array_equal(
+            ptu.decode_image(frame=-1, plane=-1, dtype='uint32')[0, 0],
+            data.sum(axis=(0, 1), dtype=numpy.uint32),
+        )
+
+
+def test_write_zstack_iterate():
+    """Test PtuWriter writing z-stack one volume at a time."""
+    t, z, y, x, c, h = 2, 3, 16, 16, 2, 32
+    data = numpy.ones((t, z, y, x, c, h), numpy.uint16)
+
+    buf = io.BytesIO()
+    with PtuWriter(buf, (1, z, y, x, c, h), 4e-8, 8e-11, 0.1) as ptu_out:
+        for t_idx in range(t):
+            ptu_out.write(data[t_idx])
+    buf.seek(0)
+
+    with PtuFile(buf) as ptu:
+        assert ptu.measurement_ndim == 4
+        assert ptu.tags['ImgHdr_Dimensions'] == 4
+        assert ptu.tags['ImgHdr_PixZ'] == z
+        assert ptu.tags['ImgHdr_MaxFrames'] == t * z
+        assert ptu.shape == (t, z, y, x, c, h)
+        assert ptu.dims == ('T', 'Z', 'Y', 'X', 'C', 'H')
+        assert ptu.number_photons == int(data.sum())
+        assert array_equal(ptu.decode_image(), data)
+
+
+@pytest.mark.parametrize(
+    'record_type', [PtuRecordType.PicoHarpT3, PtuRecordType.GenericT3]
+)
+@pytest.mark.parametrize('chunks', [(1, 1, 1, 1, 1, 1), (2, 1, 3)])
+def test_write_zstack_planes(record_type, chunks):
+    """Test PtuWriter writing z-stack in chunks of planes."""
+    t, z, y, x, c, h = 2, 3, 8, 7, 2, 32
+    data = RNG.integers(0, 3, (t, z, y, x, c, h), numpy.uint16)
+    data[..., -1] = 1
+    planes = data.reshape(t * z, y, x, c, h)
+
+    buf = io.BytesIO()
+    with PtuWriter(
+        buf, (1, z, y, x, c, h), 4e-8, 8e-11, 1e-5, record_type=record_type
+    ) as ptu_out:
+        index = 0
+        for n in chunks:
+            chunk = planes[index : index + n]
+            ptu_out.write(chunk[0] if n == 1 else chunk)
+            index += n
+    buf.seek(0)
+
+    with PtuFile(buf) as ptu:
+        assert ptu.tags['ImgHdr_PixZ'] == z
+        assert ptu.tags['ImgHdr_MaxFrames'] == t * z
+        assert ptu.shape == (t, z, y, x, c, h)
+        assert ptu.number_photons == int(data.sum())
+        assert array_equal(ptu.decode_image(), data)
+        assert array_equal(ptu.decode_image(pixel_time=0.0), data)
+        records = ptu.decode_records()
+        # overflow records report time + count for GenericT3
+        events = (records['channel'] >= 0) | (records['marker'] > 0)
+        times = records['time'][events].astype(numpy.int64)
+        assert numpy.all(numpy.diff(times) >= 0)
+
+    buf2 = io.BytesIO()
+    with PtuWriter(
+        buf2, (1, z, y, x, c, h), 4e-8, 8e-11, 1e-5, record_type=record_type
+    ) as ptu_out:
+        ptu_out.write(data)
+    with PtuFile(buf2) as ptu2:
+        records2 = ptu2.decode_records()
+    # chunking must not change encoded records
+    assert array_equal(records2, records)
+
+
+def test_write_frame_size_mismatch():
+    """Test PtuWriter.write with data not a multiple of frame size."""
+    buf = io.BytesIO()
+    with PtuWriter(buf, (1, 3, 4, 5, 1, 6), 4e-8, 8e-11, 1e-6) as ptu:
+        with pytest.raises(ValueError):
+            ptu.write(numpy.ones((4, 5, 1, 7), numpy.uint8))
+        ptu.write(numpy.ones((3, 4, 5, 1, 6), numpy.uint8))
+
+
+def test_write_zstack_incomplete(caplog):
+    """Test PtuWriter warns about incomplete z-stack."""
+    t, z, y, x, c, h = 1, 3, 4, 5, 1, 6
+    data = numpy.ones((t, z, y, x, c, h), numpy.uint8)
+
+    buf = io.BytesIO()
+    with caplog.at_level(logging.WARNING):
+        with PtuWriter(buf, data.shape, 4e-8, 8e-11, 1e-6) as ptu_out:
+            ptu_out.write(data[0, :2])
+        assert 'not a multiple of nplanes=3' in caplog.text
+    buf.seek(0)
+
+    with PtuFile(buf) as ptu:
+        assert ptu.tags['ImgHdr_MaxFrames'] == 2
+        assert ptu.number_photons == int(data[0, :2].sum())
 
 
 def test_write_none():
@@ -2389,14 +2700,10 @@ def test_write_none():
         assert len(records) == 0
 
         histogram = ptu.decode_histogram()
-        numpy.testing.assert_array_equal(
-            histogram, numpy.zeros((1, 1), numpy.uint32)
-        )
+        assert array_equal(histogram, numpy.zeros((1, 1), numpy.uint32))
 
         image = ptu.decode_image()
-        numpy.testing.assert_array_equal(
-            image, numpy.zeros((1, 3, 4, 1, 1), numpy.uint16)
-        )
+        assert array_equal(image, numpy.zeros((1, 3, 4, 1, 1), numpy.uint16))
 
 
 def test_write_iterate():
@@ -2435,7 +2742,7 @@ def test_write_iterate():
             assert ptu.tags['ImgHdr_MaxFrames'] == 2
             assert ptu.number_records == 685208
             assert ptu.shape == (2, 512, 512, 2, 4096)
-            assert_array_equal(
+            assert array_equal(
                 ptu.decode_image(frame=1, dtime=-1, dtype=numpy.uint16),
                 frame.sum(axis=-1, dtype=numpy.uint16, keepdims=True),
             )
@@ -2463,7 +2770,9 @@ def test_imwrite_exceptions():
 
     with pytest.raises(ValueError):
         # too many dimensions
-        imwrite(buf, numpy.empty((1, 31, 33, 1, 1, 1), numpy.uint8), **kwargs)
+        imwrite(
+            buf, numpy.empty((1, 1, 31, 33, 1, 1, 1), numpy.uint8), **kwargs
+        )
 
     with pytest.raises(ValueError):
         # too many channels
@@ -2522,6 +2831,33 @@ def test_imwrite_exceptions():
     with pytest.raises(ValueError):
         # invalid guid
         imwrite(buf, numpy.empty((31, 33, 1), numpy.uint8), guid='-', **kwargs)
+
+    with pytest.raises(ValueError):
+        # dims length does not match shape ndim
+        imwrite(
+            buf,
+            numpy.empty((31, 33, 63), numpy.uint8),
+            dims='TYXH',
+            **kwargs,
+        )
+
+    with pytest.raises(ValueError):
+        # dims contains invalid axis labels
+        imwrite(
+            buf,
+            numpy.empty((31, 33, 1, 63), numpy.uint8),
+            dims='ABCD',
+            **kwargs,
+        )
+
+    with pytest.raises(ValueError):
+        # dims not in canonical TZYXCH order
+        imwrite(
+            buf,
+            numpy.empty((31, 33, 63), numpy.uint8),
+            dims='HYX',
+            **kwargs,
+        )
 
 
 def test_signal_from_ptu():
