@@ -1,5 +1,17 @@
+..
+  This file is updated by setup.py. Do not edit.
+
 Revisions
 =========
+
+2026.10.16
+
+- Support z-stack images in PTU reader and writer (#5).
+- Support sparse tag indices (#5, breaking).
+- Replace PtuWriter has_frames with dims parameter (breaking).
+- Add volume_time and global_volume_time properties to PtuFile.
+- Add plane parameter to PtuFile.decode_image and imread.
+- Generalize decode_t3_image to 6-dimensional data.
 
 2026.8.8
 
