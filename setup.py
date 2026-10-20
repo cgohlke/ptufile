@@ -1,5 +1,9 @@
 # ptufile/setup.py
 
+# Copyright (c) Christoph Gohlke
+# SPDX-License-Identifier: BSD-3-Clause
+# See LICENSE file in the project root for details.
+
 """Ptufile package Setuptools script."""
 
 import os
@@ -99,7 +103,7 @@ def fix_docstring_examples(docstring: str) -> str:
                 lines.extend(['.. code-block:: python', ''])
                 start = False
         lines.append(('    ' if indent else '') + line)
-    return '\n'.join(lines)
+    return '\n'.join(lines) + '\n'
 
 
 with open('ptufile/ptufile.py', encoding='utf-8') as fh:
