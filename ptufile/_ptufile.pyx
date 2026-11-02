@@ -663,6 +663,7 @@ def decode_t3_line(
         uint32_t itime, idtime, ichannel
         uint8_t ispecial, imarker
         ssize_t i, ix, iframe, iframe_binned, maxbins_
+        bint in_line = False
         decode_func_t decode_func
 
     if pixel_time == 0:
@@ -734,14 +735,19 @@ def decode_t3_line(
                 # marker
                 if imarker & line_stop:
                     time_line_start = UINT64_MAX
-                    iframe += 1
-                    if iframe == stopt:
-                        break
-                if imarker & line_start and iframe >= startt:
-                    time_line_start = time_global
-                    if iframe_binned != (iframe - startt) // bint:
-                        iframe_binned = (iframe - startt) // bint
-                        times[iframe_binned] = time_line_start
+                    if in_line:
+                        # ignore line stop without preceding line start
+                        in_line = False
+                        iframe += 1
+                        if iframe == stopt:
+                            break
+                if imarker & line_start:
+                    in_line = True
+                    if iframe >= startt:
+                        time_line_start = time_global
+                        if iframe_binned != (iframe - startt) // bint:
+                            iframe_binned = (iframe - startt) // bint
+                            times[iframe_binned] = time_line_start
 
 
 def decode_t3_image(
@@ -779,7 +785,7 @@ def decode_t3_image(
         ssize_t sizec, sizet, sizez, sizey, sizex, sizeh
         ssize_t stopc, stopt, stopz, stopy, stopx, stoph
         ssize_t nrecords = records.size
-        ssize_t i, j, ix, iy, iy_binned, iframe, maxbins_, bidiv
+        ssize_t i, j, ix, iy, iy_binned, iframe, maxbins_
         ssize_t it, iz, it_binned, iz_binned
         uint64_t overflow, overflowj, time_global, time_line_start
         uint32_t itime, idtime, ichannel
@@ -844,7 +850,6 @@ def decode_t3_image(
         stopx = startx + sizex * binx
         stopc = startc + sizec * binc
         stoph = starth + sizeh * binh
-        bidiv = starty % 2
 
         time_line_start = UINT64_MAX
         overflow = 0
@@ -886,7 +891,7 @@ def decode_t3_image(
 
                 ix = <ssize_t> (time_global - time_line_start)
 
-                if bidirectional and iy_binned % 2 != bidiv:
+                if bidirectional and iy % 2 == 1:
                     # line backward scan
                     # TODO: support bidirectional per frame
                     # TODO: is bishift correct for sinusoidal scanning?
