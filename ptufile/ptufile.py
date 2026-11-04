@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.10.16
+:Version: 2026.11.5
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -65,18 +65,29 @@ Requirements
 This revision was tested with the following requirements and dependencies
 (other versions may work):
 
-- `CPython <https://www.python.org>`_ 3.12.10, 3.13.16, 3.14.8, 3.15.0 64-bit
+- `CPython <https://www.python.org>`_ 3.12.10, 3.13.17, 3.14.10, 3.15.2 64-bit
 - `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
 - `Xarray <https://pypi.org/project/xarray>`_ 2026.9.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.2 (optional)
 - `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.10.15 (optional)
-- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.17.0 (optional)
+- `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.17.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
-- `Cython <https://pypi.org/project/cython/>`_ 3.2.9 (build)
+- `Cython <https://pypi.org/project/cython/>`_ 3.3.1 (build)
 
 Revisions
 ---------
+
+2026.11.5
+
+- Fix undefined enum values overwriting UNKNOWN member value (breaking).
+- Fix length of time axis of T3 point measurements (breaking).
+- Fix PtuFile.decode_image silently accepting positional integer (breaking).
+- Fix decoding bidirectional images with binned Y axis.
+- Fix decoding line scans with unpaired line stop markers.
+- Fix PhuFile.histograms with negative index or asxarray.
+- Fix PtuFile.decode_histogram of T2 records without channel trimming.
+- Fix parsing indexed tags that follow scalar tags or arrive out of order.
 
 2026.10.16
 
@@ -281,7 +292,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.10.16'
+__version__ = '2026.11.5'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -760,7 +771,7 @@ class PtuWriter:
 
         header_list = [b'PQTTTR\x00\x001.0.00\x00\x00']  # magic and version
         for tagid, value in pqtags.items():
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, tuple | list):
                 for index, item in enumerate(value):
                     header_list.append(encode_tag(tagid, item, index))
             else:
@@ -780,7 +791,7 @@ class PtuWriter:
             raise RuntimeError(msg)
         self._number_frames_offset = offset + 40
 
-        if isinstance(file, (str, os.PathLike)):
+        if isinstance(file, str | os.PathLike):
             if mode is None:
                 mode = 'wb'
             elif mode[-1] != 'b':
@@ -810,6 +821,10 @@ class PtuWriter:
 
         """
         from ._ptufile import encode_t3_image
+
+        if self._fh is None:
+            msg = 'file handle is closed'
+            raise RuntimeError(msg)
 
         data = numpy.asarray(data)
         if data.dtype.kind != 'u':
@@ -860,9 +875,6 @@ class PtuWriter:
             msg = f'{number_records=} < 0'
             raise ValueError(msg)
 
-        if self._fh is None:
-            msg = 'file handle is closed'
-            raise RuntimeError(msg)
         self._fh.write(records[:number_records].tobytes())
 
         # every pixel consumes exactly pixel_time sync periods
@@ -912,6 +924,7 @@ class PtuWriter:
         dims: Sequence[str] | None = None,
     ) -> tuple[int, int, int, int, int, int]:
         """Return TCSPC histogram shape normalized to 6D 'TZYXCH'."""
+        shape = tuple(int(i) for i in shape)
         ndim = len(shape)
         if dims is not None:
             dims = [d.upper() for d in dims]
@@ -989,23 +1002,33 @@ class PqFileError(ValueError):
 class BinaryFile:
     """Binary file.
 
+    :Version: 2026.11.1
+
     Parameters:
         file:
-            File name or seekable binary stream.
+            File name, seekable binary stream, fsspec OpenFile, or mmap.
         mode:
             File open mode if ``file`` is a file name.
             If not specified, defaults to ``'r'``. Files are always opened
             in binary mode.
+            Ignored for streams and other file objects.
         memmap:
             Map file into memory.
             Ignored if memory mapping is not available or if the stream does
             not support it.
+            ``mmap.mmap`` objects are always accessed directly.
 
     Notes:
         Memory mapping can improve random-access read performance on large
         files or repeated reads of the same file regions by reducing syscall
         overhead and data copying.
         For sequential one-pass reads, regular buffered I/O may be faster.
+
+        File access is not thread-safe unless the file is memory-mapped
+        or ``set_lock(True)`` was called.
+
+        This class is shared (inlined) among many modules, for example,
+        czifile, liffile, sdtfile, orifile, obffile, ptufile, and fbdfile.
 
     Raises:
         TypeError:
@@ -1045,7 +1068,7 @@ class BinaryFile:
         self._memmap = bool(memmap)
         self._lock = contextlib.nullcontext()
 
-        if isinstance(file, (str, os.PathLike)):
+        if isinstance(file, str | os.PathLike):
             ext = os.path.splitext(file)[-1].lower()
             if self._ext and ext not in self._ext:
                 msg = f'invalid file extension: {ext!r} not in {self._ext!r}'
@@ -1072,57 +1095,84 @@ class BinaryFile:
                 raise TypeError(msg)
 
             self._fh = file
-            try:
-                self._fh.tell()
-            except Exception as exc:
+            if not self._is_seekable(self._fh):
                 msg = f'{file=!r} is not seekable'
-                raise ValueError(msg) from exc
-            if hasattr(file, 'path'):
-                self._path = os.path.abspath(file.path)
-            elif hasattr(file, 'name'):
-                self._path = os.path.abspath(file.name)
+                raise ValueError(msg)
+            self._path = self._file_path(file)
 
         elif hasattr(file, 'open'):
             # fsspec OpenFile
             self._fh = file.open()
             self._close = True
-            try:
-                self._fh.tell()
-            except Exception as exc:
+            fh: object = self._fh
+            if isinstance(fh, io.TextIOBase):
+                with contextlib.suppress(Exception):
+                    fh.close()
+                msg = f'{file=!r} is not open in binary mode'
+                raise TypeError(msg)
+            if not self._is_seekable(self._fh):
                 with contextlib.suppress(Exception):
                     self._fh.close()
                 msg = f'{file=!r} is not seekable'
-                raise ValueError(msg) from exc
-            if hasattr(file, 'path'):
-                self._path = os.path.abspath(file.path)
+                raise ValueError(msg)
+            self._path = self._file_path(file)
 
         else:
             msg = f'cannot handle {type(file)=}'
             raise TypeError(msg)
 
-        if hasattr(file, 'name') and file.name:
-            self._name = os.path.basename(file.name)
+        name = getattr(file, 'name', None)
+        if isinstance(name, str | os.PathLike) and os.fspath(name):
+            self._name = os.path.basename(name)
         elif self._path:
             self._name = os.path.basename(self._path)
         else:
             self._name = type(file).__name__
 
-        if memmap:
-            _fh: Any = self._fh
-            if isinstance(_fh, mmap.mmap):
-                self._mm = _fh
+        _fh: Any = self._fh
+        if isinstance(_fh, mmap.mmap):
+            # mmap objects lack readinto and writable
+            self._mm = _fh
+            self._mv = memoryview(self._mm)
+        elif memmap:
+            try:
+                access = (
+                    mmap.ACCESS_WRITE
+                    if self._fh.writable()
+                    else mmap.ACCESS_READ
+                )
+                self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
                 self._mv = memoryview(self._mm)
-            else:
-                try:
-                    access = (
-                        mmap.ACCESS_WRITE
-                        if self._fh.writable()
-                        else mmap.ACCESS_READ
-                    )
-                    self._mm = mmap.mmap(self._fh.fileno(), 0, access=access)
-                    self._mv = memoryview(self._mm)
-                except OSError:
-                    pass
+            except (OSError, ValueError, AttributeError):
+                # empty file or stream without file descriptor
+                pass
+
+    @staticmethod
+    def _is_seekable(fh: Any, /) -> bool:
+        """Return whether file handle supports random access."""
+        try:
+            fh.tell()
+            # e.g. fsspec HTTPStreamFile for servers without range requests
+            seekable = getattr(fh, 'seekable', None)
+            return seekable is None or bool(seekable())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _file_path(file: Any, /) -> str:
+        """Return path of file object, absolute if on local file system."""
+        path = getattr(file, 'path', None)
+        if isinstance(path, str) and path:
+            protocol = getattr(getattr(file, 'fs', None), 'protocol', 'file')
+            if isinstance(protocol, str):
+                protocol = (protocol,)
+            if 'file' in protocol or 'local' in protocol:
+                return os.path.abspath(path)
+            return path
+        name = getattr(file, 'name', None)
+        if isinstance(name, str | os.PathLike) and os.fspath(name):
+            return os.path.abspath(name)
+        return ''
 
     @property
     def filehandle(self) -> IO[bytes]:
@@ -1170,6 +1220,7 @@ class BinaryFile:
             enabled:
                 If true, use a threading.RLock, else a no-op lock.
                 Has no effect when memory-mapped I/O is active.
+                Do not call while other threads access the file.
 
         """
         if self._mm is not None:
@@ -1186,13 +1237,23 @@ class BinaryFile:
             data: Data to write.
 
         """
-        if self._mm is not None and self.writable:
-            # writable mmap: direct slice write, no cursor movement
-            self._mm[offset : offset + len(data)] = data
+        mv = self._mv
+        if mv is not None and not mv.readonly:
+            # slicing would silently write at negative or clipped offsets
+            end = offset + len(data)
+            if offset < 0 or end > len(mv):
+                msg = (
+                    f'cannot write {len(data)} bytes at {offset=} past end '
+                    f'of memory-mapped file of size {len(mv)}'
+                )
+                raise ValueError(msg)
+            mv[offset:end] = data
         else:
+            # regular streams reject negative offsets
             with self._lock:
                 self._fh.seek(offset)
                 self._fh.write(data)
+            self.__dict__.pop('filesize', None)
 
     def _read_at(self, offset: int, size: int, /) -> bytes | memoryview:
         """Read bytes from file at given offset.
@@ -1203,12 +1264,21 @@ class BinaryFile:
 
         Parameters:
             offset: Byte offset from start of file.
-            size: Number of bytes to read.
+            size: Number of bytes to read. If ``-1``, read to end of file.
 
         """
+        # hot path for small reads; regular streams reject bad arguments
         mv = self._mv
         if mv is not None:
+            if offset < 0 or size < 0:
+                # slicing would silently misread; size=-1 reads to end
+                if offset < 0 or size < -1:
+                    msg = f'{offset=} < 0 or {size=} < -1'
+                    raise ValueError(msg)
+                return mv[offset:]
             return mv[offset : offset + size]
+        # do not allocate more than available for corrupted sizes
+        # size = min(size, max(0, self.filesize - offset))
         fh = self._fh
         with self._lock:
             fh.seek(offset)
@@ -1225,9 +1295,16 @@ class BinaryFile:
             Number of bytes read.
 
         """
+        # hot path for bulk reads shared by many modules: keep it minimal.
+        # Buffered streams fill the buffer in one readinto call until EOF;
+        # do not add short-read loops or typed-buffer handling here.
         nbytes = len(buffer)
         mv = self._mv
         if mv is not None:
+            if offset < 0:
+                # slicing would silently index from the end of the map
+                msg = f'{offset=} < 0'
+                raise ValueError(msg)
             n = min(nbytes, max(0, len(mv) - offset))
             buffer[:n] = numpy.frombuffer(mv[offset : offset + n], numpy.uint8)
             return n
@@ -1237,9 +1314,10 @@ class BinaryFile:
             fh.seek(offset)
             try:
                 return fh.readinto(buffer)  # type: ignore[attr-defined, no-any-return]
-            except (AttributeError, OSError):
+            except (AttributeError, io.UnsupportedOperation):
+                # stream without readinto; do not swallow real I/O errors
                 data = fh.read(nbytes)
-                buffer[:] = numpy.frombuffer(data, numpy.uint8)
+                buffer[: len(data)] = numpy.frombuffer(data, numpy.uint8)
                 return len(data)
 
     def _read_array(
@@ -1271,6 +1349,7 @@ class BinaryFile:
             writable:
                 By default, return read-only array from memory-mapped file.
                 Prevents accidental modification of underlying writable file.
+                Arrays from read-only memory maps are always read-only.
                 Has no effect for non-memory-mapped files (always writable).
             truncate:
                 Allow partial reads of array.
@@ -1279,36 +1358,43 @@ class BinaryFile:
         """
         dtype = numpy.dtype(dtype)
         itemsize = dtype.itemsize
-        if offset < 0:
-            msg = f'{offset=} < 0'
-            raise ValueError(msg)
-        if count < -1:
-            msg = f'{count=} < -1'
-            raise ValueError(msg)
 
         mv = self._mv
         if mv is not None:
+            if offset < 0 or count < -1:
+                # slicing would silently misread; regular streams raise
+                msg = f'{offset=} < 0 or {count=} < -1'
+                raise ValueError(msg)
             if count == -1:
                 count = max(0, (len(mv) - offset) // itemsize)
             nbytes = count * itemsize
             size = min(nbytes, max(0, len(mv) - offset))
             n = size - size % itemsize
-            array = numpy.frombuffer(
-                mv[offset : offset + n],
-                dtype,
-            )
             if copy:
-                array = array.copy()
-            elif not writable and array.flags.writeable:
-                array.flags.writeable = False
+                # ndarray.copy is slow for structured dtypes
+                array = numpy.frombuffer(
+                    bytearray(mv[offset : offset + n]), dtype
+                )
+            else:
+                array = numpy.frombuffer(mv[offset : offset + n], dtype)
+                if not writable and array.flags.writeable:
+                    array.flags.writeable = False
         elif count > -1:
+            # read directly; routing through _read_into adds per-call overhead
             fh = self._fh
             nbytes = count * itemsize
+            # do not allocate more than available for corrupted sizes
+            # available = max(0, (self.filesize - offset) // itemsize)
+            # array = numpy.empty(min(count, available), dtype)
             array = numpy.empty(count, dtype)
             with self._lock:
                 fh.seek(offset)
-                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+                # array.data builds slow PEP 3118 format for structured dtypes
+                n = fh.readinto(array)  # type: ignore[attr-defined]
         else:
+            if count < -1:
+                msg = f'{count=} < -1'
+                raise ValueError(msg)
             fh = self._fh
             with self._lock:
                 fh.seek(0, os.SEEK_END)
@@ -1317,7 +1403,7 @@ class BinaryFile:
                 nbytes = count * itemsize
                 array = numpy.empty(count, dtype)
                 fh.seek(offset)
-                n = fh.readinto(array.data)  # type: ignore[attr-defined]
+                n = fh.readinto(array)  # type: ignore[attr-defined]
 
         if n != nbytes:
             array = array[: n // itemsize]
@@ -1335,10 +1421,12 @@ class BinaryFile:
         if self._mm is not None:
             return len(self._mm)
         fh = self._fh
-        try:
-            return os.fstat(fh.fileno()).st_size
-        except (AttributeError, io.UnsupportedOperation, OSError):
-            pass
+        if not fh.writable():
+            # fstat does not see unflushed writes
+            try:
+                return os.fstat(fh.fileno()).st_size
+            except (AttributeError, io.UnsupportedOperation, OSError):
+                pass
         with self._lock:
             pos = fh.tell()
             fh.seek(0, os.SEEK_END)
@@ -1349,6 +1437,8 @@ class BinaryFile:
     @property
     def writable(self) -> bool:
         """File is open for writing."""
+        if self._mv is not None:
+            return not self._mv.readonly
         return self._fh.writable()
 
     @property
@@ -1484,10 +1574,15 @@ class PqFile(BinaryFile):
                 f'{tagid=}, {index=}, {typecode=}, {value=!r}'
             )[:160]
 
-        tagid: str
-        index: int
-        typecode: int
-        value: Any
+        def differ(a: Any, b: Any) -> bool:
+            if isinstance(a, numpy.ndarray) or isinstance(b, numpy.ndarray):
+                return not numpy.array_equal(a, b)
+            return bool(a != b)
+
+        tagid: str = ''
+        index: int = -1
+        typecode: int = 0
+        value: Any = None
         unpack = struct.unpack
         try:
             while True:
@@ -1586,7 +1681,7 @@ class PqFile(BinaryFile):
                 # always found to either contain the same or more detailed
                 # values. Hence a dict interface seems sufficient.
                 if index < 0:
-                    if tagid in tags and tags[tagid] != value:
+                    if tagid in tags and differ(tags[tagid], value):
                         logger().warning(
                             errmsg(
                                 'duplicate tag', tagid, index, typecode, value
@@ -1594,15 +1689,6 @@ class PqFile(BinaryFile):
                             + f' != {tags[tagid]!r}'[:16]
                         )
                     tags[tagid] = value
-                elif index == 0:
-                    if tagid in tags and tags[tagid][0] != value:
-                        logger().warning(
-                            errmsg(
-                                'duplicate tag', tagid, index, typecode, value
-                            )
-                            + f' != {tags[tagid][0]!r}'[:16]
-                        )
-                    tags[tagid] = [value]
                 elif index > self._MAX_TAG_INDEX:
                     logger().error(
                         errmsg(
@@ -1613,18 +1699,23 @@ class PqFile(BinaryFile):
                             value,
                         )
                     )
-                elif tagid not in tags:
-                    # sparse indices are valid, missing entries are None
-                    tags[tagid] = [None] * index + [value]
                 else:
-                    values = tags[tagid]
+                    # sparse indices are valid, missing entries are None
+                    if tagid in tags and not isinstance(tags[tagid], list):
+                        logger().warning(
+                            errmsg(
+                                'duplicate tag', tagid, index, typecode, value
+                            )
+                            + f' != {tags[tagid]!r}'[:16]
+                        )
+                        del tags[tagid]
+                    values = tags.setdefault(tagid, [])
                     if index >= len(values):
                         values.extend([None] * (index - len(values)))
                         values.append(value)
                     else:
-                        if (
-                            values[index] is not None
-                            and values[index] != value
+                        if values[index] is not None and differ(
+                            values[index], value
                         ):
                             logger().warning(
                                 errmsg(
@@ -1686,7 +1777,7 @@ class PqFile(BinaryFile):
             **super().attrs,
             'type': self.type.name,
             'version': self.version,
-            'guid': str(self.guid),
+            'guid': str(self.guid) if 'File_GUID' in self.tags else None,
             'comment': self.comment,
             'datetime': (
                 None if self.datetime is None else self.datetime.isoformat()
@@ -1855,11 +1946,17 @@ class PhuFile(PqFile):
                 else ``numpy.ndarray`` (default).
 
         """
+        ncurves = self.number_histograms
         if index is None:
             index = slice(None)
-        elif isinstance(index, int):
-            index = slice(index, index + 1)
-        ncurves = self.number_histograms
+        elif isinstance(index, int | numpy.integer):
+            i = int(index)
+            if i < 0:
+                i += ncurves
+            if not 0 <= i < ncurves:
+                msg = f'{index=} out of range [0, {ncurves}]'
+                raise IndexError(msg)
+            index = slice(i, i + 1)
         if len(self.tags['HistResDscr_DataOffset']) != ncurves:
             msg = 'invalid HistResDscr_DataOffset tag'
             raise ValueError(msg)
@@ -1885,7 +1982,8 @@ class PhuFile(PqFile):
         if asxarray:
             from xarray import DataArray
 
-            assert self.histogram_resolutions is not None
+            resolutions = self.histogram_resolutions
+            assert resolutions is not None
 
             histograms = [
                 DataArray(
@@ -1900,9 +1998,7 @@ class PhuFile(PqFile):
                     attrs=self.attrs,
                     # name=self.name,
                 )
-                for h, r in zip(
-                    histograms, self.histogram_resolutions, strict=True
-                )
+                for h, r in zip(histograms, resolutions[index], strict=True)
             ]
         # TODO: do not return tuple if index is integer?
         return tuple(histograms)
@@ -2021,6 +2117,8 @@ class PtuFile(PqFile):
         return self
 
     def __getitem__(self, key: Any, /) -> NDArray[Any] | DataArray:
+        if not isinstance(key, tuple):
+            key = (key,)
         return self.decode_image(key, keepdims=False)
 
     @override
@@ -2498,7 +2596,10 @@ class PtuFile(PqFile):
                 )
             case 0 | 1:
                 return (
-                    max(1, self._info.photons // self.global_pixel_time),
+                    max(
+                        1,
+                        self._info.acquisition_time // self.global_pixel_time,
+                    ),
                     nchannels,
                     nbins,
                 )
@@ -2891,7 +2992,11 @@ class PtuFile(PqFile):
             histogram = create_output(
                 out,
                 (
-                    self.number_channels,
+                    (
+                        self.number_channels
+                        if 'C' in self._trimdims
+                        else self.number_channels_max
+                    ),
                     max(1, self.global_acquisition_time // sampling_time),
                 ),
                 dtype,
@@ -3067,7 +3172,7 @@ class PtuFile(PqFile):
 
         Raises:
             NotImplementedError:
-                T2 images, bidirectional sinusoidal scanning, and deprecated
+                T2 images, bidirectional non-image scans, and deprecated
                 image reconstruction are not supported.
             IndexError:
                 Selection is out of bounds.
@@ -3095,11 +3200,6 @@ class PtuFile(PqFile):
         if selection is None:
             selection = [None] * ndim
         else:
-            try:
-                len(selection)
-            except TypeError:
-                selection = [selection]  # type: ignore[list-item]
-
             if len(selection) > ndim:
                 msg = f'too many indices in {selection=}'
                 raise IndexError(msg)
@@ -3159,8 +3259,8 @@ class PtuFile(PqFile):
         ):
             if index is None:
                 pass
-            elif isinstance(index, int):
-                idx = index
+            elif isinstance(index, int | numpy.integer):
+                idx = int(index)
                 if idx < 0:
                     idx %= shape[i]
                 if not 0 <= idx < size:
@@ -3356,7 +3456,7 @@ class PtuFile(PqFile):
         if 'H' in dims and len(coords['H']) < shape[-1]:
             coords['H'] = numpy.linspace(
                 0,
-                shape[-1] * coords['H'][1],
+                shape[-1] * step[-1] * self.tags['MeasDesc_Resolution'],
                 shape[-1],
                 endpoint=False,
             )
@@ -3490,11 +3590,12 @@ class PhuMeasurementMode(enum.IntEnum):
     """Conti mode."""
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
@@ -3517,11 +3618,12 @@ class PhuMeasurementSubMode(enum.IntEnum):
     """Sequence mode."""
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(-1)
-        obj._value_ = value
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
@@ -3538,11 +3640,12 @@ class PtuMeasurementMode(enum.IntEnum):
     """T3 mode."""
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
@@ -3562,11 +3665,14 @@ class PtuMeasurementSubMode(enum.IntEnum):
     """Image scan mode."""
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(1 if value == 0 else -1)
-        obj._value_ = value
+        if value == 0:
+            return cls.POINT
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
@@ -3601,11 +3707,12 @@ class PtuScannerType(enum.IntEnum):
     """Zeiss ScanBox scanner."""
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
@@ -3620,14 +3727,6 @@ class PtuScanDirection(enum.IntEnum):
 
     YZ = 2
     """Y-Z scan."""
-
-    @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int) or value != 0:
-            return None
-        obj = cls(0)  # XY
-        obj._value_ = value
-        return obj
 
 
 class PtuStopReason(enum.IntEnum):
@@ -3652,11 +3751,12 @@ class PtuStopReason(enum.IntEnum):
     SYNC_LOST = -13
 
     @classmethod
-    def _missing_(cls, value: object) -> object:
-        if not isinstance(value, int):
+    def _missing_(cls, value: object) -> Self | None:
+        if not isinstance(value, int | numpy.integer):
             return None
-        obj = cls(-1)  # Unknown
-        obj._value_ = value
+        obj = int.__new__(cls, int(value))
+        obj._name_ = 'UNKNOWN'
+        obj._value_ = int(value)
         return obj
 
 
