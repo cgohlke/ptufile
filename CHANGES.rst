@@ -4,6 +4,17 @@
 Revisions
 =========
 
+2026.11.5
+
+- Fix undefined enum values overwriting UNKNOWN member value (breaking).
+- Fix length of time axis of T3 point measurements (breaking).
+- Fix PtuFile.decode_image silently accepting positional integer (breaking).
+- Fix decoding bidirectional images with binned Y axis.
+- Fix decoding line scans with unpaired line stop markers.
+- Fix PhuFile.histograms with negative index or asxarray.
+- Fix PtuFile.decode_histogram of T2 records without channel trimming.
+- Fix parsing indexed tags that follow scalar tags or arrive out of order.
+
 2026.10.16
 
 - Support z-stack images in PTU reader and writer (#5).
