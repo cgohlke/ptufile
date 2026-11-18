@@ -15,7 +15,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.11.5
+:Version: 2026.11.18
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -39,10 +39,10 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.12.10, 3.13.17, 3.14.10, 3.15.2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.5
 - `Xarray <https://pypi.org/project/xarray>`_ 2026.9.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.10.15 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.11.16 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.17.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -50,6 +50,11 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.11.18
+
+- Fix decoding images and line scans with non-integer pixel time (breaking).
+- Write pixel time encoded in records to PTU header (breaking).
 
 2026.11.5
 
