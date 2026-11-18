@@ -42,7 +42,7 @@ measurement data and instrumentation parameters.
 
 :Author: `Christoph Gohlke <https://www.cgohlke.com>`_
 :License: BSD-3-Clause
-:Version: 2026.11.5
+:Version: 2026.11.18
 :DOI: `10.5281/zenodo.10120021 <https://doi.org/10.5281/zenodo.10120021>`_
 
 Quickstart
@@ -66,10 +66,10 @@ This revision was tested with the following requirements and dependencies
 (other versions may work):
 
 - `CPython <https://www.python.org>`_ 3.12.10, 3.13.17, 3.14.10, 3.15.2 64-bit
-- `Numpy <https://pypi.org/project/numpy>`_ 2.5.4
+- `Numpy <https://pypi.org/project/numpy>`_ 2.5.5
 - `Xarray <https://pypi.org/project/xarray>`_ 2026.9.0 (recommended)
 - `Matplotlib <https://pypi.org/project/matplotlib/>`_ 3.11.2 (optional)
-- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.10.15 (optional)
+- `Tifffile <https://pypi.org/project/tifffile/>`_ 2026.11.16 (optional)
 - `Numcodecs <https://pypi.org/project/numcodecs/>`_ 0.17.1 (optional)
 - `Python-dateutil <https://pypi.org/project/python-dateutil/>`_ 2.9.0
   (optional)
@@ -77,6 +77,11 @@ This revision was tested with the following requirements and dependencies
 
 Revisions
 ---------
+
+2026.11.18
+
+- Fix decoding images and line scans with non-integer pixel time (breaking).
+- Write pixel time encoded in records to PTU header (breaking).
 
 2026.11.5
 
@@ -292,7 +297,7 @@ Preview the image and metadata in a PTU file from the console::
 
 from __future__ import annotations
 
-__version__ = '2026.11.5'
+__version__ = '2026.11.18'
 
 __all__ = [
     'FILE_EXTENSIONS',
@@ -444,8 +449,7 @@ def imread(
             Passed to :py:class:`PtuFile`.
 
     Returns:
-        image:
-            Decoded TTTR T3 records as up to 6-dimensional image array.
+        Decoded TTTR T3 records as up to 6-dimensional image array.
 
     """
     with PtuFile(file, trimdims=trimdims, memmap=memmap) as ptu:
@@ -505,6 +509,8 @@ def imwrite(
             Photons that cannot be encoded within pixel_time are omitted.
             By default, pixel_time is set just large enough to encode all
             photons.
+            Rounded to a multiple of ``global_resolution``.
+            The rounded value is written to the ImgHdr_TimePerPixel tag.
         dims:
             Axis labels of input ``shape`` in ``'[T][Z]YX[C]H'`` order.
             Disambiguates 3- to 5-dimensional shapes when the axis order
@@ -575,6 +581,8 @@ class PtuWriter:
         pixel_time:
             Time per pixel in s, typically in μs range.
             Photons that cannot be encoded within pixel_time are omitted.
+            Rounded to a multiple of ``global_resolution``.
+            The rounded value is written to the ImgHdr_TimePerPixel tag.
         record_type:
             Type of TTTR T3 records to write.
             By default, write ``PicoHarpT3`` records for up to two channels
@@ -738,7 +746,12 @@ class PtuWriter:
             'ImgHdr_LineStop': self._line_stop,
             'ImgHdr_Frame': self._frame_change,
             'ImgHdr_MaxFrames': 0,
-            'ImgHdr_TimePerPixel': pixel_time * 1e3,  # ms
+            'ImgHdr_TimePerPixel': (
+                # not: pixel_time * 1e3
+                self._pixel_time
+                * self._global_resolution
+                * 1e3  # ms
+            ),
             'ImgHdr_PixX': int(self._shape[3]),
             'ImgHdr_PixY': int(self._shape[2]),
             'ImgHdr_BiDirect': False,
@@ -1803,7 +1816,14 @@ class PqFile(BinaryFile):
                 if not (
                     name in self._STR_
                     or name
-                    in {'attrs', 'dirname', 'tags', 'name', 'filehandle'}
+                    in {
+                        'attrs',
+                        'dirname',
+                        'tags',
+                        'name',
+                        'filehandle',
+                        'lock',
+                    }
                     or name.startswith('_')
                     or callable(getattr(self, name))
                 )
@@ -2352,8 +2372,24 @@ class PtuFile(PqFile):
         Might be approximate. Multiply with global resolution to get time in s.
 
         """
+        linetime: float
         if 'ImgHdr_TimePerPixel' in self.tags:
             linetime = self.pixels_in_line * self.global_pixel_time
+            pixeltime = (
+                float(self.tags['ImgHdr_TimePerPixel'])
+                / float(self.tags['MeasDesc_GlobalResolution'])
+                / 1e3
+            )
+            if (
+                pixeltime > 0.0
+                and abs(self.pixels_in_line * pixeltime - linetime)
+                > pixeltime / 2
+            ):
+                # TimePerPixel / GlobalResolution is not a whole number:
+                # small deviations (e.g. 3124.99) are float error in header
+                # values, so keep rounded pixel time. Use exact pixel time
+                # if rounding shifts the line end by half a pixel or more
+                linetime = self.pixels_in_line * pixeltime
         elif self._info.lines > 0:
             linetime = self._info.line_time
         else:
@@ -3160,7 +3196,7 @@ class PtuFile(PqFile):
                 memory-mapped array in the specified file.
 
         Returns:
-            image:
+            :
                 Decoded TTTR T3 records as up to 6-dimensional image array:
 
                 - ``'T'`` time/frame/volume
@@ -3323,6 +3359,16 @@ class PtuFile(PqFile):
                 1, round(pixel_time / self.global_resolution)
             )
             global_line_time = global_pixel_time * self.pixels_in_line
+            pixeltime = pixel_time / self.global_resolution
+            if (
+                abs(self.pixels_in_line * pixeltime - global_line_time)
+                > pixeltime / 2
+            ):
+                # see global_line_time: keep rounded pixel time unless it
+                # shifts the line end by half a pixel or more
+                global_line_time = max(
+                    self.pixels_in_line, round(self.pixels_in_line * pixeltime)
+                )
 
         if self.is_sinusoidal:
             pixel_at_time = sinusoidal_correction(
@@ -3412,7 +3458,8 @@ class PtuFile(PqFile):
                 times,
                 records,
                 self.tags['TTResultFormat_TTTRRecType'],
-                global_pixel_time,
+                self.pixels_in_line,
+                global_line_time,
                 self.line_start_mask,
                 self.line_stop_mask,
                 *start,
@@ -3999,7 +4046,7 @@ def binread(
             If true, return a read-only memory-mapped array.
 
     Returns:
-        tuple:
+        :
             - histogram:
               TCSPC image histogram array of shape (length, width, bins).
             - metadata:
@@ -4153,13 +4200,13 @@ def create_output(
     *,
     mode: Literal['r+', 'w+', 'r', 'c'] = 'w+',
     suffix: str | None = None,
-    fillvalue: float | None = None,
+    fillvalue: ArrayLike | None = None,
 ) -> NDArray[Any] | numpy.memmap[Any, Any]:
     """Return NumPy array where data of shape and dtype can be copied.
 
     Parameters:
         out:
-            Specifies kind of array of ``shape`` and ``dtype`` to return:
+            Kind of array of ``shape`` and ``dtype`` to return:
 
                 ``None``:
                     Return new array.
@@ -4177,13 +4224,14 @@ def create_output(
             data type.
         mode:
             File mode to create memory-mapped array.
-            The default is 'w+' to create new, or overwrite existing file for
+            Default: ``'w+'``. Creates new or overwrites existing file for
             reading and writing.
         suffix:
             Suffix of ``NamedTemporaryFile`` if ``out`` is ``'memmap'``.
-            The default is '.memmap'.
+            Default: ``'.memmap'``.
         fillvalue:
             Value to initialize output array.
+            Must be broadcastable to ``shape``.
             By default, return uninitialized array.
 
     Returns:
@@ -4200,9 +4248,10 @@ def create_output(
     if out is None:
         if fillvalue is None:
             return numpy.empty(shape, dtype)
-        if fillvalue:
-            return numpy.full(shape, fillvalue, dtype)
-        return numpy.zeros(shape, dtype)
+        if numpy.ndim(fillvalue) == 0 and not fillvalue:
+            # zeros is faster than full: pages are zeroed lazily by the OS
+            return numpy.zeros(shape, dtype)
+        return numpy.full(shape, fillvalue, dtype)
     if isinstance(out, numpy.ndarray):
         if product(shape) != product(out.shape):
             msg = f'cannot reshape {shape} to {out.shape}'
@@ -4213,7 +4262,7 @@ def create_output(
         if out.shape != shape:
             out = out.reshape(shape, copy=False)
         if fillvalue is not None:
-            out.fill(fillvalue)
+            out[...] = fillvalue
         return out
     if isinstance(out, str) and out[:6] == 'memmap':
         import tempfile
@@ -4224,11 +4273,11 @@ def create_output(
         with tempfile.NamedTemporaryFile(dir=tempdir, suffix=suffix) as fh:
             out = numpy.memmap(fh, shape=shape, dtype=dtype, mode=mode)
             if fillvalue is not None:
-                out.fill(fillvalue)
+                out[...] = fillvalue
             return out
     out = numpy.memmap(out, shape=shape, dtype=dtype, mode=mode)
     if fillvalue is not None:
-        out.fill(fillvalue)
+        out[...] = fillvalue
     return out
 
 
