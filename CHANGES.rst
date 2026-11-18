@@ -4,6 +4,11 @@
 Revisions
 =========
 
+2026.11.18
+
+- Fix decoding images and line scans with non-integer pixel time (breaking).
+- Write pixel time encoded in records to PTU header (breaking).
+
 2026.11.5
 
 - Fix undefined enum values overwriting UNKNOWN member value (breaking).
