@@ -31,9 +31,11 @@
 
 """Unittests for the ptufile package.
 
-:Version: 2026.11.5
+:Version: 2026.11.18
 
 """
+
+from __future__ import annotations
 
 import contextlib
 import datetime
@@ -47,14 +49,18 @@ import pathlib
 import sys
 import sysconfig
 import tempfile
-import types
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy
 import pytest
 from numpy import array_equal  # faster than numpy.testing.assert_array_equal
 from numpy.testing import assert_allclose, assert_almost_equal
+
+if TYPE_CHECKING:
+    import types
+    from typing import Any, Literal
+
 
 import ptufile
 import ptufile.numcodecs
@@ -82,11 +88,6 @@ from ptufile import (
     imread,
     imwrite,
 )
-
-try:
-    import fsspec
-except ImportError:
-    fsspec = None  # type: ignore[assignment]
 
 try:
     import xarray
@@ -147,7 +148,7 @@ def test_import_xarray() -> None:
 
 def test_import_matplotlib() -> None:
     """Assert matplotlib is installed."""
-    if os.environ.get('PTUFILE_DISABLE_PYPLOT') == '1':
+    if os.environ.get('PTUFILE_DISABLE_PYPLOT'):
         assert pyplot is None
     else:
         assert pyplot is not None
@@ -263,13 +264,12 @@ def test_pfs() -> None:
 def test_pqres(caplog: pytest.LogCaptureFixture) -> None:
     """Test read PQRES file."""
     filename = DATA / 'Samples.sptw/AnisotropyImage.pqres'
-    with caplog.at_level(logging.ERROR):
-        with PqFile(filename) as pq:
-            str(pq)
-            # assert 'not divisible by 8' in caplog.text
-            assert pq.type == PqFileType.PQRES
-            assert pq.version == '00.0.1'
-            assert pq.tags['VarStatFilterGrpIdx'].startswith(b'\xe7/\x00\x00')
+    with caplog.at_level(logging.ERROR), PqFile(filename) as pq:
+        str(pq)
+        # assert 'not divisible by 8' in caplog.text
+        assert pq.type == PqFileType.PQRES
+        assert pq.version == '00.0.1'
+        assert pq.tags['VarStatFilterGrpIdx'].startswith(b'\xe7/\x00\x00')
         attrs = pq.attrs
         assert attrs['type'] == pq.type.name
         assert attrs['name'] == pq.name
@@ -348,13 +348,13 @@ def test_spqr() -> None:
         assert attrs['tags'] == pq.tags
 
 
-@pytest.mark.parametrize('filetype', [str, io.BytesIO, mmap])
+@pytest.mark.parametrize('filetype', [str, open, mmap])
 def test_ptu(filetype: Any) -> None:
     """Test read PTU file."""
     filename: Any = (
         DATA / 'napari_flim_phasor_plotter/hazelnut_FLIM_single_image.ptu'
     )
-    if filetype is io.BytesIO:
+    if filetype is open:
         filename = open(filename, 'rb')
     try:
         with PtuFile(filename, memmap=filetype is mmap) as ptu:
@@ -490,15 +490,15 @@ def test_ptu(filetype: Any) -> None:
 
             # decoding of records is tested separately
     finally:
-        if filetype is io.BytesIO:
+        if filetype is open:
             filename.close()
 
 
-@pytest.mark.parametrize('filetype', [str, io.BytesIO, mmap])
+@pytest.mark.parametrize('filetype', [str, open, mmap])
 def test_phu(filetype: Any) -> None:
     """Test read PHU file."""
     filename: Any = DATA / 'TimeHarp/Decay_Coumarin_6.phu'
-    if filetype is io.BytesIO:
+    if filetype is open:
         filename = open(filename, 'rb')
     try:
         with PhuFile(filename, memmap=filetype is mmap) as phu:
@@ -542,7 +542,7 @@ def test_phu(filetype: Any) -> None:
                 phu.plot(show=False, verbose=False)
                 phu.plot(show=False, verbose=True)
     finally:
-        if filetype is io.BytesIO:
+        if filetype is open:
             filename.close()
 
 
@@ -819,32 +819,30 @@ def test_ptu_channels() -> None:
         assert ptu.syncrate == 24999920
         assert ptu.tcspc_resolution == 7.999999968033578e-11
 
-        if xarray is None:
-            return  # type: ignore[unreachable]
+        if xarray is not None:
+            histogram = ptu.decode_histogram(asxarray=True)
+            assert histogram.shape == (2, 501)
+            assert array_equal(histogram.coords['C'], (2, 3))
+            assert histogram[1].coords['C'] == 3
 
-        histogram = ptu.decode_histogram(asxarray=True)
-        assert histogram.shape == (2, 501)
-        assert array_equal(histogram.coords['C'], (2, 3))
-        assert histogram[1].coords['C'] == 3
+            histogram = ptu.decode_histogram(asxarray=True, dtime=0)
+            assert histogram.shape == (2, 500)
 
-        histogram = ptu.decode_histogram(asxarray=True, dtime=0)
-        assert histogram.shape == (2, 500)
+            histogram = ptu.decode_histogram(asxarray=True, dtime=100)
+            assert histogram.shape == (2, 100)
 
-        histogram = ptu.decode_histogram(asxarray=True, dtime=100)
-        assert histogram.shape == (2, 100)
+            image = ptu.decode_image(asxarray=True, dtime=-1)
+            assert array_equal(image.coords['C'], (2, 3))
+            assert image[..., 1, :].coords['C'] == 3
+            assert array_equal(ptu._coords_c, (2, 3))
 
-        image = ptu.decode_image(asxarray=True, dtime=-1)
-        assert array_equal(image.coords['C'], (2, 3))
-        assert image[..., 1, :].coords['C'] == 3
-        assert array_equal(ptu._coords_c, (2, 3))
+            image = ptu.decode_image(asxarray=True, channel=1, dtime=-1)
+            assert array_equal(image.coords['C'], (3,))
 
-        image = ptu.decode_image(asxarray=True, channel=1, dtime=-1)
-        assert array_equal(image.coords['C'], (3,))
-
-        image = ptu.decode_image(
-            asxarray=True, channel=1, dtime=-1, keepdims=False
-        )
-        assert 'C' not in image.coords
+            image = ptu.decode_image(
+                asxarray=True, channel=1, dtime=-1, keepdims=False
+            )
+            assert 'C' not in image.coords
 
     with PtuFile(filename, trimdims='') as ptu:
         str(ptu)
@@ -1245,7 +1243,9 @@ def test_ptu_plot(*, filename: str, verbose: bool) -> None:
 
 @pytest.mark.parametrize('copy', [False, True])
 @pytest.mark.parametrize('memmap', [False, True])
-def test_ptu_read_records(*, copy: bool, memmap: bool) -> None:
+def test_ptu_read_records(
+    copy: Literal[False, True], memmap: Literal[False, True]
+) -> None:
     """Test PTU read_records method."""
     # the file is tested in test_issue_skip_frame
     filename = DATA / 'Samples.sptw/GUVs.ptu'
@@ -1311,14 +1311,16 @@ def test_ptu_output(output: str) -> None:
             out = tempfile.TemporaryFile()
         else:
             out = 'memmap'
-        im = ptu.decode_image(selection, out=out)
-        if output == 'ndarray':
-            im = out
-        else:
-            assert isinstance(im, numpy.memmap)
-        assert im[:, 281, 373, 0, 0].sum(axis=0) == 157
-        if output == 'filename':
-            out.close()
+        try:
+            im = ptu.decode_image(selection, out=out)
+            if output == 'ndarray':
+                im = out
+            else:
+                assert isinstance(im, numpy.memmap)
+            assert im[:, 281, 373, 0, 0].sum(axis=0) == 157
+        finally:
+            if output == 'filename':
+                out.close()
 
 
 def test_ptu_getitem() -> None:
@@ -1344,7 +1346,7 @@ def test_ptu_getitem() -> None:
         assert im0[:, 281, 373, 0].sum(axis=0) == 157
         # slice
         im = ptu[-89:-34:3, ..., :, 1:2, ::-1]
-        assert im0.dtype == 'uint32'
+        assert im.dtype == 'uint32'
         assert array_equal(im, im0)
         ptu.dtype = 'uint16'
         # slice uint16
@@ -1353,9 +1355,12 @@ def test_ptu_getitem() -> None:
         assert im.dtype == 'uint16'
         assert array_equal(im, im0.squeeze())
 
-        if xarray is None:
-            return  # type: ignore[unreachable]
 
+@pytest.mark.skipif(xarray is None, reason='xarray not installed')
+def test_ptu_getitem_xarray() -> None:
+    """Test slice PTU with xarray output."""
+    filename = DATA / 'Samples.sptw/GUVs.ptu'
+    with PtuFile(filename) as ptu:
         # slice with xarray
         ptu.use_xarray = True
         assert ptu.use_xarray
@@ -1522,7 +1527,7 @@ def test_issue_skip_frame() -> None:
 
 def test_issue_marker_order() -> None:
     """Test PTU with strange marker order."""
-    # the file has `[ | ][][][ | ]`` instead  of `[] | [][] | []`` markers
+    # the file has `[ | ][][][ | ]` instead of `[] | [][] | []` markers
     # first and last frame are incomplete
     filename = DATA / 'Samples.sptw/CENP-labelled_cells_for_FRET.ptu'
     with PtuFile(filename, trimdims='CH') as ptu:
@@ -1629,7 +1634,7 @@ def test_issue_empty_line() -> None:
         assert ptu.number_markers == 513
         assert ptu.number_photons == 722402
         assert ptu.number_records == 723240
-        assert ptu.global_pixel_time == 325  # 324
+        assert ptu.global_pixel_time == 325
         assert ptu.pixel_time == pytest.approx(
             ptu.global_pixel_time * ptu.global_resolution, rel=1e-3
         )
@@ -1706,7 +1711,7 @@ def test_issue_pixeltime_zero() -> None:
         )
         assert im.shape == (512, 512)
         assert im.dtype == numpy.uint32
-        assert im[281, 373] == 25
+        assert im[281, 373] == 24
 
 
 def test_issue_pixeltime_off() -> None:
@@ -1785,7 +1790,47 @@ def test_issue_pixeltime_off() -> None:
         # use pixel time from line markers
         im = ptu.decode_image(channel=1, frame=0, pixel_time=0, keepdims=False)
         im = im[..., :2000].sum(axis=-1, dtype=numpy.int32)
-        assert numpy.abs(im - data).max() == 8
+        assert numpy.abs(im - data).max() == 0
+
+
+def test_issue_pixeltime_fraction() -> None:
+    """Test PTU with non-integer global pixel time."""
+    filename = DATA / 'issue4/GUV_7.ptu'
+    with PtuFile(filename) as ptu:
+        # 6.333 sync periods per pixel, rounded to 6
+        assert ptu.tags['ImgHdr_TimePerPixel'] == pytest.approx(9.5e-4)
+        assert ptu.global_pixel_time == 6
+        assert ptu.global_line_time == 1621
+        assert ptu._info.line_time == 1620
+        assert ptu.pixels_in_line == 256
+
+        kwargs: dict[str, Any] = {
+            'frame': -1,
+            'channel': -1,
+            'dtime': -1,
+            'keepdims': False,
+            'dtype': numpy.uint32,
+        }
+        # pixel time from line markers is reference
+        reference = ptu.decode_image(pixel_time=0, **kwargs)
+        assert reference.sum() == 26678100
+
+        # exact pixel time from metadata
+        image = ptu.decode_image(**kwargs)
+        assert image.sum() == 26681049
+        diff = numpy.abs(image.astype(numpy.int64) - reference)
+        assert diff.max() == 688
+        assert diff.sum() == 1988353
+
+        # rounded pixel time stretches lines and drops photons at line end
+        image = ptu.decode_image(
+            pixel_time=ptu.global_pixel_time * ptu.global_resolution,
+            **kwargs,
+        )
+        assert image.sum() == 25517581
+        diff = numpy.abs(image.astype(numpy.int64) - reference)
+        assert diff.max() == 4913
+        assert diff.sum() == 11458149
 
 
 def test_issue_number_records_zero(caplog: pytest.LogCaptureFixture) -> None:
@@ -1818,7 +1863,7 @@ def test_issue_number_records_negative(
 
 @pytest.mark.parametrize('memmap', [False, True])
 def test_issue_record_number(
-    *, memmap: bool, caplog: pytest.LogCaptureFixture
+    memmap: Literal[False, True], caplog: pytest.LogCaptureFixture
 ) -> None:
     """Test PTU with too few records."""
     filename = DATA / 'Samples.sptw/Cy5_immo_FLIM+Pol-Imaging.ptu'
@@ -1932,7 +1977,7 @@ def test_decode_t3_line_unpaired_stop() -> None:
     histogram = numpy.zeros((2, 2, 1, 4), numpy.uint16)
     times = numpy.zeros(2, numpy.uint64)
     decode_t3_line(
-        histogram, times, records, PtuRecordType.PicoHarpT3, 5, 1, 2
+        histogram, times, records, PtuRecordType.PicoHarpT3, 2, 10, 1, 2
     )
     assert histogram[0, 0, 0, 3] == 1
     assert histogram[1, 1, 0, 1] == 1
@@ -1988,7 +2033,7 @@ def test_issue_line_markers() -> None:
 
         data = ptu.decode_image(pixel_time=0)
         assert data.shape == (2, 150, 150, 2, 626)
-        assert data.sum(dtype=numpy.uint32) == 778696
+        assert data.sum(dtype=numpy.uint32) == 779104
 
 
 def test_issue_imspector(caplog: pytest.LogCaptureFixture) -> None:
@@ -2007,7 +2052,8 @@ def test_issue_imspector(caplog: pytest.LogCaptureFixture) -> None:
         assert ptu._info.lines == 0
         str(ptu)
 
-        image = ptu.decode_image(dtime=-1, frame=-1, keepdims=False)
+        with caplog.at_level(logging.WARNING):
+            image = ptu.decode_image(dtime=-1, frame=-1, keepdims=False)
         assert 'invalid line_start' in caplog.text
         assert image.sum() == 0  # empty
 
@@ -2100,11 +2146,11 @@ def test_imwrite(
         else:
             shape = (1, 31, 33, 2, 63)
             if counts:
-                data[..., :, -1] = 1
+                data[..., -1] = 1
     else:
         shape = data.shape
         if counts:
-            data[..., :, -1] = 1
+            data[..., -1] = 1
 
     guid = '{b767c46e-9693-4ad9-9fcf-7fab5e4377fc}'
     comment = f'{shape=} \u2764\ufe0f'
@@ -2245,7 +2291,11 @@ def test_imwrite_rewrite(record_type: PtuRecordType) -> None:
             assert ptu.number_lines == 1536
             assert ptu.number_markers == 3075
             assert ptu.number_photons == data.sum(dtype=numpy.uint32)
-            assert ptu.number_records in {21116856, 21683856}
+            assert ptu.number_records == (
+                21116856
+                if record_type == PtuRecordType.PicoHarpT3
+                else 21683856
+            )
             assert ptu.pixels_in_frame == 262144
             assert ptu.pixels_in_line == 512
             assert ptu.syncrate == 24999920
@@ -2481,6 +2531,10 @@ def test_write_iterate() -> None:
                     frame = ptu_in.decode_image(frame=i)
                     assert frame.shape == (1, 512, 512, 2, 4096)  # 4 GB
                     ptu_out.write(frame)
+                    if i == 1:
+                        expected = frame.sum(
+                            axis=-1, dtype=numpy.uint16, keepdims=True
+                        )
 
         with PtuFile(fnout) as ptu:
             assert ptu.version == '1.0.00'
@@ -2497,7 +2551,7 @@ def test_write_iterate() -> None:
             assert ptu.shape == (2, 512, 512, 2, 4096)
             assert array_equal(
                 ptu.decode_image(frame=1, dtime=-1, dtype=numpy.uint16),
-                frame.sum(axis=-1, dtype=numpy.uint16, keepdims=True),
+                expected,
             )
     finally:
         if os.path.exists(fnout):
@@ -2726,9 +2780,9 @@ def test_ptu_measurement_submode() -> None:
 )
 def test_glob(filename: str) -> None:
     """Test read all PicoQuant files."""
-    filename = str(DATA / filename)
     if 'htmlcov' in filename or 'url' in filename or 'defective' in filename:
         pytest.skip()
+    filename = str(DATA / filename)
     with PqFile(filename, memmap=True) as pq:
         str(pq)
         is_ptu = pq.type == PqFileType.PTU
@@ -2790,7 +2844,7 @@ def test_ptu_numcodecs() -> None:
         import zarr
         from kerchunk.utils import refs_as_store
     except ImportError:
-        pytest.skip('fsspec, tifffile, or zarr not installed')
+        pytest.skip('tifffile, zarr, or kerchunk not installed')
 
     pathname = DATA / 'Flipper TR time series.sptw'
     url = str(pathname).replace('\\', '/')
@@ -2832,11 +2886,12 @@ def test_ptu_numcodecs() -> None:
 
 
 @pytest.mark.skipif(
-    not hasattr(sys, '_is_gil_enabled'), reason='Python < 3.13'
+    not sysconfig.get_config_var('Py_GIL_DISABLED'),
+    reason='not free-threaded Python',
 )
-def test_gil_enabled() -> None:
-    """Test that GIL state is consistent with build configuration."""
-    assert sys._is_gil_enabled() != sysconfig.get_config_var('Py_GIL_DISABLED')
+def test_gil_disabled() -> None:
+    """Test that GIL is disabled on free-threaded Python."""
+    assert not sys._is_gil_enabled()
 
 
 if __name__ == '__main__':
