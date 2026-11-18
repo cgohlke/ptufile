@@ -642,7 +642,8 @@ def decode_t3_line(
     uint64_t[::1] times,
     const uint32_t[::1] records,
     const uint32_t format,
-    const uint64_t pixel_time,
+    const ssize_t pixels_in_line,
+    const ssize_t line_time,  # global time spent in one line
     const uint32_t line_start,
     const uint32_t line_stop,
     const ssize_t startt = 0,
@@ -666,8 +667,8 @@ def decode_t3_line(
         bint in_line = False
         decode_func_t decode_func
 
-    if pixel_time == 0:
-        raise ValueError(f'invalid {pixel_time=}')
+    if pixels_in_line <= 0 or line_time <= 0:
+        raise ValueError(f'invalid {pixels_in_line=} or {line_time=}')
 
     if init_format(format, &decode_func, &maxbins_, &i) != 0:
         raise ValueError(f'no decoder available for {format=:02x}')
@@ -719,7 +720,10 @@ def decode_t3_line(
                 ):
                     continue
 
-                ix = (time_global - time_line_start) // pixel_time
+                ix = <ssize_t> (time_global - time_line_start)
+                if ix >= line_time:
+                    continue
+                ix = ix * pixels_in_line // line_time
                 if ix < startx or ix >= stopx:
                     continue
                 histogram[
@@ -902,7 +906,7 @@ def decode_t3_image(
                 elif sinusoidal:
                     ix = <ssize_t> pixel_at_time[ix]
                 else:
-                    ix = ix // pixel_time
+                    ix = ix * pixels_in_line // line_time
 
                 if ix >= startx and ix < stopx:
                     # idtime_binned = (idtime - starth) // binh
@@ -976,11 +980,6 @@ def decode_t3_image(
                             line_time = <ssize_t> (
                                 time_global - time_line_start
                             )
-                            # pixel_time = <ssize_t> round(
-                            #     <double> line_time / <double> pixels_in_line
-                            # )
-                            pixel_time = line_time // pixels_in_line
-                            pixel_time = pixel_time if pixel_time > 0 else 1
                     else:
                         # line is not part of selection
                         time_line_start = UINT64_MAX
